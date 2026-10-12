@@ -38,6 +38,12 @@
         color: #8ab4ff;
         pointer-events: auto;
       }
+      /* On a narrow screen, only the name and the links: the rest would cover the view. */
+      @media (max-width: 760px) {
+        #hud .more {
+          display: none;
+        }
+      }
       /* The view mode, top right. */
       #view {
         position: fixed;
@@ -90,11 +96,15 @@
   </head>
   <body>
     <div id="hud">
-      <strong>three-html-panel</strong> — web sites from other origins, running in iframes and drawn
-      as textures in a three.js scene. Choose one on the panel to the left.<br />
-      Move with WASD or the stick · drag outside the panels to look around · V switches orbit and
-      first person · wheel or drag a finger over a panel to scroll it · in VR, point and pull the
-      trigger ·
+      <strong>three-html-panel</strong>
+      <span class="more"
+        >— web sites from other origins, running in iframes and drawn as textures in a three.js
+        scene. Choose one on the panel to the left.<br />
+        Move with WASD or the stick · drag outside the panels to look around · V switches orbit and
+        first person · wheel or drag a finger over a panel to scroll it · in VR, point and pull the
+        trigger</span
+      >
+      ·
       <a href="https://github.com/urth-inc/three-html-panel" target="_blank" rel="noopener"
         >GitHub</a
       >
