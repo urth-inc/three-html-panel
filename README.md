@@ -16,11 +16,12 @@ Show existing web pages — scripts included, from any origin — as interactive
 
 ```
  host page (three.js)                           panel page (any origin)
-┌────────────────────────────────┐   input     ┌───────────────────────┐
-│ HtmlPanel  ── MessagePort ──────┼───────────▶ │ agent                 │
-│   PanelPointer / PanelKeyboard │   frames    │   replays the input   │
-│   texture ◀── SVG ─────────────┼◀─────────── │   copies the DOM      │
-└────────────────────────────────┘             └───────────────────────┘
+┌────────────────────────────────┐             ┌──────────────────────┐
+│ HtmlPanel                      │    input    │ agent                │
+│   PanelPointer / PanelKeyboard ├────────────>│   replays the input  │
+│   texture <── SVG              │<────────────┤   copies the DOM     │
+└────────────────────────────────┘    frames   └──────────────────────┘
+                                   MessagePort
 ```
 
 The page runs in an `<iframe>` and loads a small script, the **agent**. The agent copies the page into an SVG `<foreignObject>`, which the host draws into a texture, and replays the host's input in the page as DOM events. The host never reads the page's document.
