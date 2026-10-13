@@ -8,7 +8,6 @@ import {
   LineBasicMaterial,
   PerspectiveCamera,
   Scene,
-  Timer,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -164,12 +163,12 @@ addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// The time between frames, for moving; not counting the time the page was hidden.
-const timer = new Timer();
-timer.connect(document);
+// The time since the last frame, so that moving goes as fast whatever the
+// display's refresh rate (at most 0.1 s: a frame after a pause does not jump).
+let last = 0;
 renderer.setAnimationLoop((time) => {
-  timer.update(time);
-  const seconds = Math.min(timer.getDelta(), 0.1);
+  const seconds = last ? Math.min((time - last) / 1000, 0.1) : 0;
+  last = time;
   xrPointer.update();
   // In VR, the headset moves the view.
   if (!renderer.xr.isPresenting) navigation.update(seconds);
