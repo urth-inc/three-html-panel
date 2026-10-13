@@ -188,27 +188,32 @@ export function lostProperties(style: CSSStyleDeclaration): string[] {
 }
 
 /**
- * The blocks of top-level style rules parsed from a fetched stylesheet's text
- * (see DocumentCss.readable), as written between their braces: lossless where
- * the CSSOM is not (lostProperties).
+ * The blocks of style rules parsed from a fetched stylesheet's text (see
+ * DocumentCss.readable) whose values the CSSOM lost (lostProperties), as
+ * written between their braces: lossless where the CSSOM is not.
  */
 const sourceBlocks = new WeakMap<CSSRule, string>();
 
+/** Whether a rule lost values in its own declarations, or in those between its nested rules (CSSNestedDeclarations). */
+function lostOwn(rule: CSSRule): boolean {
+  return (
+    ("style" in rule && lostProperties((rule as CSSStyleRule).style).length > 0) ||
+    Array.from((rule as Partial<CSSStyleRule>).cssRules ?? []).some(
+      (inner) => !("selectorText" in inner) && lostOwn(inner),
+    )
+  );
+}
+
+/** Whether a rule, or any rule in it, lost values. */
+const lostAnywhere = (rule: CSSRule): boolean =>
+  lostOwn(rule) || Array.from((rule as Partial<CSSGroupingRule>).cssRules ?? []).some(lostAnywhere);
+
 /**
  * A style rule's block as the stylesheet wrote it (its declarations and nested
- * rules), if that is known and the CSSOM lost some of its values (in it or in
- * declarations between its nested rules); null otherwise.
+ * rules), if the CSSOM lost some of its values and the text is known; null otherwise.
  */
 export function writtenBlockOf(rule: CSSStyleRule): string | null {
-  const block = sourceBlocks.get(rule);
-  if (block === undefined) return null;
-  const lost = (rule: CSSRule): boolean =>
-    ("style" in rule && lostProperties((rule as CSSStyleRule).style).length > 0) ||
-    // Declarations between nested rules (CSSNestedDeclarations) are the rule's too.
-    Array.from((rule as Partial<CSSStyleRule>).cssRules ?? []).some(
-      (inner) => !("selectorText" in inner) && lost(inner),
-    );
-  return lost(rule) ? block : null;
+  return sourceBlocks.get(rule) ?? null;
 }
 
 /**
@@ -278,50 +283,63 @@ const isStyleRule = (rule: CSSRule | undefined): rule is CSSStyleRule =>
 
 /**
  * Parses CSS text into `sheet` (replaceSync, which leaves out @import), and
- * keeps the blocks of its style rules as written (see writtenBlockOf): those
- * at the top level and those in blocks of rules (@media, @supports, @layer…,
- * where hover rules often are). Only those with var() in them can lose
- * values. Each is found by parsing its statement alone: the rule it makes is
- * the sheet's with the same text, so a statement split apart differently from
- * the browser's parser (after a stray token) matches no rule and is left out.
+ * keeps the blocks of the style rules whose values the CSSOM lost as written
+ * (see writtenBlockOf): at the top level, in blocks of rules (@media,
+ * @supports, @layer…, where hover rules often are) and nested in other style
+ * rules (`&:hover`).
  */
 export function parseInto(sheet: CSSStyleSheet, text: string): void {
   sheet.replaceSync(text);
-  const scratch = new (sheet.constructor as typeof CSSStyleSheet)();
-  keepWrittenBlocks(sheet.cssRules, text, scratch);
+  keepWrittenBlocks(sheet.cssRules, text, () => new (sheet.constructor as typeof CSSStyleSheet)());
 }
 
-/** Keeps the written blocks of `rules` (the parse of `text`) and of the blocks of rules in them. */
-function keepWrittenBlocks(rules: CSSRuleList, text: string, scratch: CSSStyleSheet): void {
-  // By the text of the rule each statement makes: its block (a style rule's),
-  // or the text inside it (a block of rules', looked into in turn).
-  const styleBlocks = new Map<string, string[]>();
-  const innerTexts = new Map<string, string[]>();
-  const add = (map: Map<string, string[]>, key: string, value: string) => {
-    const values = map.get(key);
-    if (values) values.push(value);
-    else map.set(key, [value]);
-  };
+/**
+ * Keeps the written blocks of those of `rules` (the parse of `text`) that lost
+ * values, and looks into those with rules in them that did. A rule's text is
+ * found by parsing each statement alone: the rule it makes has the same text
+ * as the sheet's. That text is the CSSOM's, lossy itself: rules that differ
+ * only in what was lost have the same. So a text is taken only where as many
+ * statements make it as the sheet has rules with it. Where they differ, the
+ * browser's parser dropped one the statement split kept (after a stray
+ * token), and which is which is not known: those rules are left as the CSSOM
+ * has them (the copy takes their values from the computed style).
+ */
+function keepWrittenBlocks(
+  rules: CSSRuleList,
+  text: string,
+  newScratch: () => CSSStyleSheet,
+  scratch: { sheet?: CSSStyleSheet } = {},
+): void {
+  const lossy = Array.from(rules).filter(
+    (rule) => (isStyleRule(rule) || "cssRules" in rule) && lostAnywhere(rule),
+  );
+  // Most sheets: nothing to parse again.
+  if (lossy.length === 0) return;
+  const wanted = new Map<string, number>();
+  for (const rule of lossy) wanted.set(rule.cssText, (wanted.get(rule.cssText) ?? 0) + 1);
+  const written = new Map<string, string[]>();
   for (const { text: statement, open } of splitStatements(text)) {
+    // A value is lost only with var() in it.
     if (open < 0 || !statement.includes("var(")) continue;
-    scratch.replaceSync(statement);
-    const rule = scratch.cssRules[0];
-    if (scratch.cssRules.length !== 1 || !rule) continue;
+    const sheet = (scratch.sheet ??= newScratch());
+    sheet.replaceSync(statement);
+    const rule = sheet.cssRules[0];
+    if (sheet.cssRules.length !== 1 || !rule || !wanted.has(rule.cssText)) continue;
     const close = statement.lastIndexOf("}");
     const block = statement.slice(open + 1, close > open ? close : undefined);
-    if (isStyleRule(rule)) add(styleBlocks, rule.cssText, block);
-    else if ("cssRules" in rule) add(innerTexts, rule.cssText, block);
+    const blocks = written.get(rule.cssText);
+    if (blocks) blocks.push(block);
+    else written.set(rule.cssText, [block]);
   }
-  if (styleBlocks.size === 0 && innerTexts.size === 0) return;
-  for (const rule of Array.from(rules)) {
-    if (isStyleRule(rule)) {
-      const block = styleBlocks.get(rule.cssText)?.shift();
-      if (block !== undefined) sourceBlocks.set(rule, block);
-    } else if ("cssRules" in rule) {
-      const inner = innerTexts.get(rule.cssText)?.shift();
-      if (inner !== undefined)
-        keepWrittenBlocks((rule as CSSGroupingRule).cssRules, inner, scratch);
-    }
+  for (const rule of lossy) {
+    const blocks = written.get(rule.cssText);
+    // Taken in order (the parser keeps the statements' order), and only where the counts agree.
+    if (!blocks || blocks.length !== wanted.get(rule.cssText)) continue;
+    const block = blocks.shift()!;
+    wanted.set(rule.cssText, blocks.length);
+    if (isStyleRule(rule) && lostOwn(rule)) sourceBlocks.set(rule, block);
+    const inner = (rule as Partial<CSSGroupingRule>).cssRules;
+    if (inner?.length) keepWrittenBlocks(inner, block, newScratch, scratch);
   }
 }
 

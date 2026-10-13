@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   inlineCssUrls,
   liveSelector,
@@ -12,6 +12,7 @@ import {
   signatureParts,
   stylesheetsSignature,
   unwrapLiveSelector,
+  writtenBlockOf,
 } from "./css";
 
 describe("rewriteSelector", () => {
@@ -199,38 +200,66 @@ describe("splitStatements", () => {
 });
 
 describe("parseInto and declarationsOf", () => {
+  /** Whether declarations lose values in the CSSOM, as browsers have it: a var() shorthand and a longhand over it. */
+  const losesValues = (declarations: string) =>
+    declarations.includes("var(") && /-(top|right|bottom|left)-color/.test(declarations);
+
   /**
-   * A sheet that parses as browsers do here: each `selector{…}` a style rule,
-   * `@media …{…}` a block of the rules in it, other at-rules left out, and a
-   * rule with var() losing its values (lostProperties).
+   * Parses as browsers do here: `selector{…}` a style rule (with the rules
+   * nested in it), `@media …{…}` a block of rules, other at-rules left out.
+   * Text that is no rule (`color: red;` at the top) swallows the next rule,
+   * as the parser takes it into that rule's prelude. A rule's text is lossy
+   * as the CSSOM's is: rules that differ only in what they lost have the same.
    */
   function fakeRules(text: string): object[] {
-    return splitStatements(text)
-      .filter(({ open }) => open >= 0)
-      .flatMap(({ text, open }) => {
-        const prelude = text.slice(0, open).trim();
-        if (prelude.startsWith("@media")) {
-          const cssRules = fakeRules(text.slice(open + 1, text.lastIndexOf("}")));
-          const inner = cssRules.map((rule) => (rule as { cssText: string }).cssText).join(" ");
-          return [{ cssRules, cssText: `${prelude} { ${inner} }` }];
-        }
-        if (prelude.startsWith("@")) return [];
-        const lossy = text.includes("var(");
-        const names = lossy ? ["border-top-style"] : [];
-        return [
-          {
-            selectorText: prelude,
-            cssText: `${prelude} { … }`,
-            cssRules: [],
-            style: {
-              cssText: lossy ? "border-top-style: ;" : "color: red;",
-              length: names.length,
-              item: (index: number) => names[index],
-              getPropertyValue: () => "",
-            },
-          },
-        ];
+    const rules: object[] = [];
+    let swallow = false;
+    for (const { text: statement, open } of splitStatements(text)) {
+      if (open < 0) {
+        if (!statement.startsWith("@")) swallow = true;
+        continue;
+      }
+      if (swallow) {
+        swallow = false;
+        continue;
+      }
+      const prelude = statement.slice(0, open).trim();
+      const block = statement.slice(open + 1, statement.lastIndexOf("}"));
+      if (prelude.startsWith("@media")) {
+        const cssRules = fakeRules(block);
+        const inner = cssRules.map((rule) => (rule as { cssText: string }).cssText).join(" ");
+        rules.push({ cssRules, cssText: `${prelude} { ${inner} }` });
+        continue;
+      }
+      if (prelude.startsWith("@")) continue;
+      const parts = splitStatements(block);
+      const declarations = parts
+        .filter((part) => part.open < 0)
+        .map((part) => part.text)
+        .join("");
+      const cssRules = fakeRules(
+        parts
+          .filter((part) => part.open >= 0)
+          .map((part) => part.text)
+          .join(" "),
+      );
+      const lossy = losesValues(declarations);
+      const names = lossy ? ["border-top-style"] : [];
+      const own = lossy ? "border-top-style: ;" : declarations;
+      const inner = cssRules.map((rule) => (rule as { cssText: string }).cssText).join(" ");
+      rules.push({
+        selectorText: prelude,
+        cssText: `${prelude} { ${own} ${inner} }`,
+        cssRules,
+        style: {
+          cssText: own,
+          length: names.length,
+          item: (index: number) => names[index],
+          getPropertyValue: () => "",
+        },
       });
+    }
+    return rules;
   }
   class FakeSheet {
     cssRules: object[] = [];
@@ -243,30 +272,51 @@ describe("parseInto and declarationsOf", () => {
     parseInto(sheet, css);
     return Array.from(sheet.cssRules) as CSSStyleRule[];
   };
+  const LOSSY_A = "border: 1px solid var(--a); border-top-color: red";
+  const LOSSY_B = "border: 2px solid var(--b); border-top-color: red";
 
   it("keeps a rule's declarations as written, used where the CSSOM lost some", () => {
-    const [lossy, plain] = parse(
-      `@import "x.css"; .a { border: 1px solid var(--a); border-top-color: red } .b{color:red}`,
-    );
-    expect(declarationsOf(lossy!)).toBe(" border: 1px solid var(--a); border-top-color: red ");
-    expect(declarationsOf(plain!)).toBe("color: red;");
+    const [lossy, plain] = parse(`@import "x.css"; .a { ${LOSSY_A} } .b{color:red}`);
+    expect(declarationsOf(lossy!)).toBe(` ${LOSSY_A} `);
+    expect(declarationsOf(plain!)).toBe("color:red");
   });
 
   it("keeps those in blocks of rules too, where hover rules often are", () => {
-    const [media] = parse(
-      `@media (hover: hover) { .b:hover{color:red} .a:hover { border: 1px solid var(--a); border-top-color: red } }`,
-    );
+    const [media] = parse(`@media (hover: hover) { .b:hover{color:red} .a:hover { ${LOSSY_A} } }`);
     const [plain, lossy] = Array.from(
       (media as unknown as CSSMediaRule).cssRules,
     ) as CSSStyleRule[];
-    expect(declarationsOf(lossy!)).toBe(" border: 1px solid var(--a); border-top-color: red ");
-    expect(declarationsOf(plain!)).toBe("color: red;");
+    expect(declarationsOf(lossy!)).toBe(` ${LOSSY_A} `);
+    expect(declarationsOf(plain!)).toBe("color:red");
+  });
+
+  it("keeps those nested in another style rule (&:hover)", () => {
+    const [button] = parse(`.btn { color: red; &:hover { ${LOSSY_A} } }`);
+    const [hover] = Array.from(button!.cssRules) as CSSStyleRule[];
+    expect(declarationsOf(hover!)).toBe(` ${LOSSY_A} `);
+    // It lost nothing itself.
+    expect(writtenBlockOf(button!)).toBeNull();
   });
 
   it("gives each of two rules with the same text its own block, in order", () => {
-    const [first, second] = parse(`.a{border:1px solid var(--a)} .a{border:2px solid var(--b)}`);
-    expect(declarationsOf(first!)).toBe("border:1px solid var(--a)");
-    expect(declarationsOf(second!)).toBe("border:2px solid var(--b)");
+    const [first, second] = parse(`.a{${LOSSY_A}} .a{${LOSSY_B}}`);
+    expect(declarationsOf(first!)).toBe(LOSSY_A);
+    expect(declarationsOf(second!)).toBe(LOSSY_B);
+  });
+
+  it("takes no text for rules the parser and the statements disagree on (it dropped one)", () => {
+    // The parser takes `color: red;` into the first .a's prelude, and drops it.
+    const rules = parse(`color: red; .a{${LOSSY_A}} .a{${LOSSY_B}}`);
+    expect(rules).toHaveLength(1);
+    // Not the dropped rule's text: the CSSOM's (its values come from the computed style).
+    expect(declarationsOf(rules[0]!)).toBe("border-top-style: ;");
+  });
+
+  it("parses nothing again in a sheet where no rule lost values", () => {
+    const replace = vi.spyOn(FakeSheet.prototype, "replaceSync");
+    parse(`.a { color: var(--a) } @media all { .b { border: 1px solid var(--b) } }`);
+    expect(replace).toHaveBeenCalledTimes(1);
+    replace.mockRestore();
   });
 });
 
