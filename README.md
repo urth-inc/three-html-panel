@@ -31,7 +31,7 @@ npm install @urth/three-html-panel three
 
 three r158 or later (with `@types/three` 0.158 or later for TypeScript).
 
-The agent adds about 35 kB (gzip) to each panel page.
+The agent, which panel pages load, does not use three.js; it adds about 35 kB (gzip) to each panel page.
 
 ## Usage
 
@@ -160,6 +160,11 @@ vp check        # format, lint and types
 `pnpm e2e` starts `pnpm dev`, or uses one already running at its origins. For other ports, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`) in the environment: the tests do not read `.env` files. `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
 The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use, such as `article`, a long page with sticky and fixed elements, and `boxes`), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). These four sites and `examples/live-demo/`, the live demo that shows them one at a time, use the published package from npm, not `src/`. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+
+### Releasing
+
+1. In a pull request, set `version` in `package.json`, and check the agent's size in [Install](#install) against [bundlejs](https://bundlejs.com/?q=@urth/three-html-panel/agent-script.js).
+2. Once it is merged, push the tag `v<version>` on `main`: `.github/workflows/release.yml` publishes the package to npm.
 
 ## License
 
