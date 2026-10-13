@@ -1,11 +1,12 @@
 // Moving around the scene: WASD (or the arrow keys) and an on-screen stick in
 // the bottom left, in either of two views. Orbit turns around the panel shown
-// (OrbitControls: drag to turn around it, wheel to zoom, right drag to pan):
-// W and S come closer to it and go back, A and D go round it. First person
-// turns the camera itself (drag toward where to look): WASD walk along the
-// ground, where the camera faces. Drags and the wheel over a panel go to the
-// panel (PanelPointer takes them first), and keys go to a panel while one of
-// its text fields has focus.
+// (OrbitControls: drag to turn around it, wheel or pinch to zoom, right drag to
+// pan): W and S come closer to it and go back, A and D move to the side, and
+// what it turns around with them. First person turns the camera itself (drag
+// toward where to look): WASD walk along the ground, where the camera faces,
+// and the wheel or a pinch walks forward and back. Drags and the wheel over a
+// panel go to the panel (PanelPointer takes them first), and keys go to a
+// panel while one of its text fields has focus.
 
 import { type PerspectiveCamera, Vector2, Vector3 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -17,10 +18,10 @@ const SPEED = 1.6;
 /** Radians per CSS pixel dragged, in first person. */
 const LOOK_SPEED = 0.004;
 const MAX_PITCH = (85 * Math.PI) / 180;
+/** Metres walked per CSS pixel two fingers spread apart, in first person. */
+const PINCH_SPEED = 0.005;
 /** How close orbiting comes to the panel it turns around. */
 const MIN_ORBIT_DISTANCE = 0.5;
-
-const UP = new Vector3(0, 1, 0);
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   KeyW: [0, 1],
@@ -48,6 +49,8 @@ export class Navigation {
   #yaw = 0;
   #pitch = 0;
   #look: { id: number; x: number; y: number } | null = null;
+  /** First person: the touches down outside the panels; two pinch. */
+  readonly #touches = new Map<number, { x: number; y: number }>();
   readonly #listeners = new Set<(mode: ViewMode) => void>();
 
   constructor(camera: PerspectiveCamera, element: HTMLElement, keysTaken: () => boolean) {
@@ -79,6 +82,7 @@ export class Navigation {
     if (mode === this.#mode) return;
     this.#mode = mode;
     this.#look = null;
+    this.#touches.clear();
     const camera = this.#camera;
     if (mode === "first-person") {
       // Looking where the orbit looked.
@@ -134,13 +138,14 @@ export class Navigation {
     if (this.#mode === "orbit") this.orbit.update();
   }
 
-  /** Round the panel (x) and toward it (y), `step` metres along the ground. */
+  /** To the side (x), with what it turns around, and toward it (y), `step` metres along the ground. */
   #orbitBy(input: Vector2, step: number): void {
     const target = this.orbit.target;
     const offset = this.#camera.position.clone().sub(target);
     const distance = Math.hypot(offset.x, offset.z);
-    // As far round as `step` along the circle the camera is on.
-    offset.applyAxisAngle(UP, (input.x * step) / Math.max(distance, 1));
+    // To the right of where the camera faces, along the ground: what it turns around too.
+    if (distance > 1e-6)
+      target.add(new Vector3(offset.z, 0, -offset.x).multiplyScalar((input.x * step) / distance));
     const closer =
       Math.max(distance - input.y * step, MIN_ORBIT_DISTANCE) / Math.max(distance, 1e-6);
     offset.x *= closer;
@@ -174,15 +179,35 @@ export class Navigation {
     this.#held.delete(event.code);
   };
 
-  // First person: a drag outside the panels turns the camera toward it (right to look right).
+  // First person: a drag outside the panels turns the camera toward it (right
+  // to look right); two fingers pinch, to walk forward (apart) and back.
   readonly #onPointerDown = (event: PointerEvent) => {
-    if (this.#mode !== "first-person" || this.#look) return;
+    if (this.#mode !== "first-person") return;
+    if (event.pointerType === "touch") {
+      this.#touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      this.#element.setPointerCapture(event.pointerId);
+      // A second finger: no longer a drag to look.
+      if (this.#touches.size > 1) this.#look = null;
+    }
+    if (this.#look || this.#touches.size > 1) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     this.#look = { id: event.pointerId, x: event.clientX, y: event.clientY };
     this.#element.setPointerCapture(event.pointerId);
   };
 
   readonly #onPointerMove = (event: PointerEvent) => {
+    const touch = this.#touches.get(event.pointerId);
+    if (touch && this.#touches.size === 2) {
+      const spread = this.#spread();
+      touch.x = event.clientX;
+      touch.y = event.clientY;
+      this.#forward((this.#spread() - spread) * PINCH_SPEED);
+      return;
+    }
+    if (touch) {
+      touch.x = event.clientX;
+      touch.y = event.clientY;
+    }
     const look = this.#look;
     if (!look || event.pointerId !== look.id) return;
     this.#yaw -= (event.clientX - look.x) * LOOK_SPEED;
@@ -194,16 +219,28 @@ export class Navigation {
   };
 
   readonly #onPointerUp = (event: PointerEvent) => {
+    this.#touches.delete(event.pointerId);
     if (this.#look?.id === event.pointerId) this.#look = null;
   };
+
+  /** How far apart the two touches are (CSS px). */
+  #spread(): number {
+    const [a, b] = this.#touches.values();
+    return Math.hypot(a!.x - b!.x, a!.y - b!.y);
+  }
 
   // First person: the wheel outside the panels walks forward and back.
   readonly #onWheel = (event: WheelEvent) => {
     if (this.#mode !== "first-person") return;
     event.preventDefault();
-    const forward = this.#camera.getWorldDirection(new Vector3());
-    this.#camera.position.addScaledVector(forward, -event.deltaY * 0.002);
+    this.#forward(-event.deltaY * 0.002);
   };
+
+  /** `metres` where the camera looks (back if negative). */
+  #forward(metres: number): void {
+    const forward = this.#camera.getWorldDirection(new Vector3());
+    this.#camera.position.addScaledVector(forward, metres);
+  }
 
   #applyLook(): void {
     this.#camera.rotation.set(this.#pitch, this.#yaw, 0, "YXZ");
