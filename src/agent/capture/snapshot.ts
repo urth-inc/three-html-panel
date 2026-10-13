@@ -93,6 +93,8 @@ export interface SnapshotOptions {
   openedAt?: (element: Element) => number;
   /** The elements of the page's rules whose values its CSSOM lost (matchLostDeclarations): copied as computed. */
   lost?: LostMatches;
+  /** Told of each shadow root copied (to watch it for changes, which the page's document does not show). */
+  shadowRoot?: (root: ShadowRoot) => void;
 }
 
 /** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
@@ -650,6 +652,7 @@ class Snapshotter {
     this.#styles.set(element, style);
     // A host and everything drawn in it.
     const inShadow = this.#inShadow || element.shadowRoot !== null;
+    if (element.shadowRoot) this.#options.shadowRoot?.(element.shadowRoot);
 
     if (element instanceof this.#window.HTMLCanvasElement)
       return this.#remember(
@@ -721,10 +724,11 @@ class Snapshotter {
    * where they did not (`button` in the page's CSS, a shadow root's buttons),
    * or no more (`my-host > span`, a host's child now in its slot). So every
    * property is reset (SHADOW_RULES), and those not at their initial value
-   * are set in its style, important: over every rule, over the page's own
-   * style attribute, which comes after (and is in the computed values); the
-   * copy's own adjustments set theirs again later. Its ::before and ::after
-   * get a rule of their own.
+   * are set in its style, important: over every rule. They replace its own
+   * style (the page's, in the computed values already, whose var()s would
+   * find no custom properties, which are not copied); the copy's own
+   * adjustments set theirs again later. Its ::before and ::after get a rule
+   * of their own.
    */
   #copyShadowStyle(
     element: Element,
@@ -746,8 +750,7 @@ class Snapshotter {
       }
       return declared;
     };
-    const own = copy.getAttribute("style");
-    copy.setAttribute("style", declarations(style).join(";") + (own ? `;${own}` : ""));
+    copy.setAttribute("style", declarations(style).join(";"));
     let mark = "";
     for (const pseudo of ["::before", "::after"]) {
       const computed = this.#window.getComputedStyle(element, pseudo);

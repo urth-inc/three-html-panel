@@ -218,6 +218,23 @@ describe("shadow roots", () => {
       expect(copy.getElementById(id)!.hasAttribute("data-thp-shadow")).toBe(true);
     expect(copy.getElementById("after")!.hasAttribute("data-thp-shadow")).toBe(false);
   });
+
+  it("replaces the style of what is drawn in one with the computed values: its var()s would find nothing", () => {
+    document.body.innerHTML = `<x-card id="host"></x-card>`;
+    const host = document.querySelector("#host")!;
+    host.attachShadow({ mode: "open" }).innerHTML =
+      `<div id="inner" style="--accent: red; color: var(--accent) !important"></div>`;
+    document.getAnimations = () => [];
+    const roots: ShadowRoot[] = [];
+    const xhtml = snapshotDocument(document, {
+      inlineImage: () => null,
+      shadowRoot: (root) => roots.push(root),
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    // (jsdom computes no var(), as browsers do.)
+    expect(copy.getElementById("inner")!.getAttribute("style")).not.toMatch(/--accent\s*:/);
+    expect(roots).toEqual([host.shadowRoot]);
+  });
 });
 
 describe("text being composed", () => {

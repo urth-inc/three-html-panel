@@ -56,3 +56,29 @@ export function closestInFlatTree(element: Element, selector: string): Element |
     if (node.matches(selector)) return node;
   return null;
 }
+
+/** The elements in an element (and it) that match a selector, in the order of the flat tree. */
+export function querySelectorAllInFlatTree(root: Element, selector: string): Element[] {
+  const found: Element[] = [];
+  const visit = (element: Element) => {
+    if (element.matches(selector)) found.push(element);
+    for (const child of flatChildren(element)) if (isElement(child)) visit(child);
+  };
+  visit(root);
+  return found;
+}
+
+/**
+ * An element as a document or shadow root sees it (what its activeElement
+ * says, for one): itself if it is in that tree, or else the host it is in,
+ * there; null if it is not in that tree at all.
+ */
+export function retarget(element: Element, scope: Document | ShadowRoot): Element | null {
+  for (let node: Element | null = element; node;) {
+    const root = node.getRootNode();
+    if (root === scope) return node;
+    node =
+      root.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? ((root as ShadowRoot).host ?? null) : null;
+  }
+  return null;
+}

@@ -16,6 +16,7 @@ const STAR_OFF = [200, 200, 205];
 const BADGE = [40, 120, 220];
 const BADGE_DOT = [250, 220, 60];
 const AFTER = [30, 160, 90];
+const LATE = [220, 40, 160];
 
 /** The box of the nth star (from 1), in the rating's shadow root. */
 const star = (n: number): Promise<Box> =>
@@ -56,5 +57,30 @@ test("presses what is drawn in a shadow root, and what follows it", async () => 
   await expect.poll(result).toBe("Rated 4. Pressed 1 times.");
   await panel.ifDrawn(async () => {
     await expect.poll(async () => drawsColor(await star(4), STAR_ON)).toBe(true);
+  });
+});
+
+test("moves the focus with Tab through a shadow root, which the page sees as its host's", async ({
+  page,
+}) => {
+  const second = await star(2);
+  await panel.focus(panel.screen(second.left + second.width / 2, second.top + second.height / 2));
+  await page.keyboard.press("Tab");
+  const focus = () =>
+    panel.frame.evaluate(() => {
+      const rating = document.querySelector("#rating")!;
+      return {
+        page: document.activeElement?.id,
+        shadow: rating.shadowRoot!.activeElement?.getAttribute("aria-label"),
+      };
+    });
+  await expect.poll(focus).toEqual({ page: "rating", shadow: "3 stars" });
+});
+
+test("draws a shadow root attached after the page loaded, as it changes", async () => {
+  await panel.ifDrawn(async () => {
+    await expect
+      .poll(async () => drawsColor(await panel.box("#late"), LATE), { timeout: 5_000 })
+      .toBe(true);
   });
 });

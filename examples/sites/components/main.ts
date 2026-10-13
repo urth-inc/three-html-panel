@@ -51,3 +51,18 @@ document.querySelector("#after")!.addEventListener("click", () => {
   pressed++;
   show();
 });
+
+// Defined after the page has loaded: its shadow root is attached then, and
+// what is in it changes later, with no change to the page's document.
+class Late extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" }).innerHTML = `
+      <style>:host { display: block; width: 240px; height: 40px; } div { height: 100%; background: rgb(200 200 205); }</style>
+      <div></div>`;
+    setTimeout(() => {
+      this.shadowRoot!.querySelector("div")!.style.background = "rgb(220 40 160)";
+    }, 300);
+  }
+}
+setTimeout(() => customElements.define("x-late", Late), 1000);

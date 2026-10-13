@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { closestInFlatTree, deepElementFromPoint, flatChildren, flatParent } from "./flat-tree";
+import {
+  closestInFlatTree,
+  deepElementFromPoint,
+  flatChildren,
+  flatParent,
+  querySelectorAllInFlatTree,
+  retarget,
+} from "./flat-tree";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -61,5 +68,26 @@ describe("deepElementFromPoint", () => {
     // A host's own box, with nothing of its shadow root there.
     root.elementFromPoint = () => element;
     expect(deepElementFromPoint(document, 10, 10)).toBe(element);
+  });
+});
+
+describe("querySelectorAllInFlatTree", () => {
+  it("finds what is drawn, in the order drawn: a shadow root's, a host's children at their slot", () => {
+    const { root } = host();
+    root.prepend(Object.assign(document.createElement("b"), { id: "first" }));
+    const ids = querySelectorAllInFlatTree(document.documentElement, "[id]").map(
+      (element) => element.id,
+    );
+    expect(ids).toEqual(["link", "host", "first", "button", "slot", "light"]);
+  });
+});
+
+describe("retarget", () => {
+  it("gives an element as a document or a shadow root sees it", () => {
+    const { host: element, root } = host();
+    const button = root.querySelector("#button")!;
+    expect(retarget(button, document)).toBe(element);
+    expect(retarget(button, root)).toBe(button);
+    expect(retarget(element, root)).toBeNull();
   });
 });

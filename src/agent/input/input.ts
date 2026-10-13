@@ -34,7 +34,13 @@ import {
   type Composition,
   type TextField,
 } from "./caret";
-import { closestInFlatTree, deepElementFromPoint, flatParent } from "../flat-tree";
+import {
+  closestInFlatTree,
+  deepElementFromPoint,
+  flatParent,
+  querySelectorAllInFlatTree,
+  retarget,
+} from "../flat-tree";
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
@@ -198,9 +204,18 @@ export class VirtualFocus {
     // The agent should run before the page's scripts. If it was loaded later,
     // something may have been focused for real already: take it over.
     const realActive = document.activeElement;
+    // As the browser's: the host of a shadow root the focus is in, outside it.
     Object.defineProperty(document, "activeElement", {
       configurable: true,
-      get: () => this.current ?? document.body,
+      get: () => (this.current && retarget(this.current, document)) ?? document.body,
+    });
+    const current = () => this.current;
+    Object.defineProperty(this.#window.ShadowRoot.prototype, "activeElement", {
+      configurable: true,
+      get(this: ShadowRoot) {
+        const focused = current();
+        return focused && retarget(focused, this);
+      },
     });
     if (realActive instanceof this.#window.HTMLElement && realActive !== document.body) {
       this.#element = realActive;
@@ -1724,30 +1739,32 @@ export class InputSynthesizer {
 
   #tabOrder(): Element[] {
     const { HTMLElement, HTMLInputElement } = this.#window;
-    const candidates = Array.from(this.#document.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
-      (element) => {
-        if (
-          !(element instanceof HTMLElement) ||
-          element.tabIndex < 0 ||
-          !this.#focus.isFocusable(element)
-        )
-          return false;
-        if (element.closest("[inert]")) return false;
-        // jsdom has no checkVisibility; there, everything counts as shown.
-        if (
-          typeof element.checkVisibility === "function" &&
-          !element.checkVisibility({ visibilityProperty: true })
-        ) {
-          return false;
-        }
-        if (element instanceof HTMLInputElement && element.type === "radio") {
-          // One stop per group: the checked radio, or else the first one.
-          const group = this.#radioGroup(element);
-          return element === (group.find((radio) => radio.checked) ?? group[0]);
-        }
-        return true;
-      },
-    ) as HTMLElement[];
+    // In shadow roots too (a press can focus what is in one), in the order drawn.
+    const candidates = querySelectorAllInFlatTree(
+      this.#document.documentElement,
+      FOCUSABLE_SELECTOR,
+    ).filter((element) => {
+      if (
+        !(element instanceof HTMLElement) ||
+        element.tabIndex < 0 ||
+        !this.#focus.isFocusable(element)
+      )
+        return false;
+      if (closestInFlatTree(element, "[inert]")) return false;
+      // jsdom has no checkVisibility; there, everything counts as shown.
+      if (
+        typeof element.checkVisibility === "function" &&
+        !element.checkVisibility({ visibilityProperty: true })
+      ) {
+        return false;
+      }
+      if (element instanceof HTMLInputElement && element.type === "radio") {
+        // One stop per group: the checked radio, or else the first one.
+        const group = this.#radioGroup(element);
+        return element === (group.find((radio) => radio.checked) ?? group[0]);
+      }
+      return true;
+    }) as HTMLElement[];
     const positive = candidates
       .filter((element) => element.tabIndex > 0)
       .sort((a, b) => a.tabIndex - b.tabIndex);

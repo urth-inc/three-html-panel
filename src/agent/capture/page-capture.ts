@@ -75,6 +75,14 @@ const INVALIDATING_EVENTS = [
   "ended",
 ];
 
+/** What the page's observer watches, in the document and in each shadow root. */
+const MUTATIONS: MutationObserverInit = {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+};
+
 export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void;
   /**
@@ -105,6 +113,10 @@ export class PageCapture {
   readonly #images: ImageInliner;
   readonly #input: InputSynthesizer;
   readonly #mutations: MutationObserver;
+  /** The shadow roots #mutations watches too (see #watchShadowRoot). */
+  readonly #shadowRoots = new WeakSet<ShadowRoot>();
+  /** Puts the page's attachShadow back (see #watchShadowRoot). */
+  readonly #restoreAttachShadow: () => void;
   readonly #pacer = new RenderPacer();
   #dirty = true;
   #timer = 0;
@@ -215,12 +227,26 @@ export class PageCapture {
     // A transition ran (one in an inline style, say): the page has some.
     this.#window.addEventListener("transitionrun", this.#transitionRan, true);
 
-    this.#mutations.observe(document, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      characterData: true,
-    });
+    this.#mutations.observe(document, MUTATIONS);
+    // A shadow root attached later (a custom element defined after the page
+    // loaded, say) changes no node the observer sees, nor does what goes in it.
+    const proto = this.#window.Element.prototype;
+    // oxlint-disable-next-line typescript/unbound-method -- called with .call on an element
+    const attachShadow = proto.attachShadow;
+    const attached = (root: ShadowRoot) => {
+      this.#watchShadowRoot(root);
+      this.#changed();
+    };
+    // The page's elements call it with themselves as `this`: no arrow function.
+    const watched = function (this: Element, init: ShadowRootInit): ShadowRoot {
+      const root = attachShadow.call(this, init);
+      attached(root);
+      return root;
+    };
+    proto.attachShadow = watched;
+    this.#restoreAttachShadow = () => {
+      if (proto.attachShadow === watched) proto.attachShadow = attachShadow;
+    };
     for (const type of INVALIDATING_EVENTS)
       this.#window.addEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS) this.#window.addEventListener(type, this.#stateChanged, true);
@@ -291,6 +317,7 @@ export class PageCapture {
     this.#input.dispose();
     this.#liveCss.dispose();
     this.#mutations.disconnect();
+    this.#restoreAttachShadow();
     for (const type of INVALIDATING_EVENTS)
       this.#window.removeEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS)
@@ -447,6 +474,8 @@ export class PageCapture {
         openedAt: (element) => this.#openOrder.at(element),
         inlineImage: (url) => this.#images.get(url),
         lost: this.#lostElements(),
+        // One declared in the HTML, or attached before the agent ran.
+        shadowRoot: (root) => this.#watchShadowRoot(root),
       }),
     );
     const svg = buildFrameSvg(xhtml, sheets, width, height);
@@ -454,6 +483,13 @@ export class PageCapture {
       this.#lastSvg = svg;
       this.#options.onFrame({ svg, width, height });
     }
+  }
+
+  /** Watches a shadow root for changes as the page's document is: the document's observer does not see into it. */
+  #watchShadowRoot(root: ShadowRoot): void {
+    if (this.#shadowRoots.has(root)) return;
+    this.#shadowRoots.add(root);
+    this.#mutations.observe(root, MUTATIONS);
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */

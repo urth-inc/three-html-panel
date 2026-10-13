@@ -75,6 +75,20 @@ describe("virtual focus", () => {
     expect(input.focused).toBe(field);
   });
 
+  it("shows focus in a shadow root as browsers do: as its host, outside it", () => {
+    document.body.insertAdjacentHTML("beforeend", `<x-host id="host"></x-host>`);
+    const host = document.querySelector("#host")!;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="inner">Inner</button>`;
+    const inner = root.querySelector<HTMLElement>("#inner")!;
+    inner.focus();
+    expect(input.focused).toBe(inner);
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(inner);
+    document.querySelector<HTMLElement>("#name")!.focus();
+    expect(root.activeElement).toBeNull();
+  });
+
   it("loses focus when the element is removed", () => {
     const field = document.querySelector<HTMLInputElement>("#name")!;
     field.focus();
@@ -317,6 +331,26 @@ describe("text editing", () => {
     expect(input.focused).toBe(byId("first"));
     tab(true);
     expect(input.focused).toBe(byId("r2"));
+  });
+
+  it("moves with Tab into a shadow root and on, in the order drawn", () => {
+    document.body.innerHTML = `<button id="before">Before</button><x-host id="host"></x-host><button id="after">After</button>`;
+    const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="one">One</button><button id="two">Two</button>`;
+    const tab = () =>
+      input.handle({
+        type: "key",
+        key: "Tab",
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+      });
+    root.querySelector<HTMLElement>("#one")!.focus();
+    tab();
+    expect(input.focused).toBe(root.querySelector("#two"));
+    tab();
+    expect(input.focused).toBe(document.getElementById("after"));
   });
 
   it("toggles checkboxes with Space, and moves through a radio group with the arrows", () => {

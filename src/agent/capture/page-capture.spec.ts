@@ -467,6 +467,20 @@ describe("interaction states in the live page", () => {
     expect(document.querySelector(".row")!.hasAttribute("data-thp-focus-within")).toBe(false);
   });
 
+  it("captures a shadow root attached later, and what goes in it", async () => {
+    capture.start();
+    await settle();
+    let count = captures.mock.calls.length;
+    const root = document.querySelector(".row")!.attachShadow({ mode: "open" });
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count + 1);
+    count = captures.mock.calls.length;
+    root.innerHTML = `<b>Inside</b>`;
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count + 1);
+    expect(frames.at(-1)).toContain("Inside");
+  });
+
   it("captures a change the page makes through the CSSOM only", async () => {
     capture.start();
     await settle();
