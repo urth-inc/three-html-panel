@@ -1,5 +1,5 @@
 // A page with what a reader or an editor has: text to select and copy,
-// drop-down lists, a contenteditable box and a video. Nothing in it knows that
+// drop-down lists, a contenteditable box, a video and a picture. Nothing in it knows that
 // it is shown in 3D.
 
 const editor = document.querySelector<HTMLElement>("#editor")!;

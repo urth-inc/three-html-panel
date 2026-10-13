@@ -1,5 +1,5 @@
 // The reader page (examples/sites/reader): selecting and copying the page's text, a
-// <select>'s list, editing a contenteditable box, and a video.
+// <select>'s list, editing a contenteditable box, a video and a <picture>.
 
 import { expect, test } from "@playwright/test";
 import { PanelPage } from "./panel";
@@ -379,4 +379,18 @@ test("plays a video, drawing its frames as they come", async () => {
   // Not the black of a video with no frame, and moving.
   expect(Math.max(...first)).toBeGreaterThan(40);
   expect(second).not.toEqual(first);
+});
+
+test("draws the source a <picture> picked, at the size the page shows it (not its pixels, at 2x)", async () => {
+  test.skip(!panel.drawn, "only seen in the drawn image (no WebGL)");
+  const image = await panel.box("#picture img");
+  // The source's 160 × 120 pixels, at 2x.
+  expect([image.width, image.height]).toEqual([80, 60]);
+  const orange = [230, 120, 30];
+  const drawsOrange = async (x: number, y: number) =>
+    (await panel.pixel(x, y)).every((value, index) => Math.abs(value - orange[index]!) < 24);
+  await expect.poll(() => drawsOrange(image.left + 40, image.top + 30)).toBe(true);
+  // Not drawn past its box, at its pixels' size.
+  expect(await drawsOrange(image.left + 100, image.top + 30)).toBe(false);
+  expect(await drawsOrange(image.left + 40, image.top + 80)).toBe(false);
 });

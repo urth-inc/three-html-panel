@@ -656,6 +656,10 @@ class Snapshotter {
         const value = style.getPropertyValue(property);
         if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
       }
+      // The fallback stands in for a candidate of another shape, maybe (a
+      // <source media> for narrow screens): fit it in the box, not stretched.
+      if (!element.currentSrc && style.objectFit === "fill")
+        copy.style.setProperty("object-fit", "contain", "important");
     }
   }
 

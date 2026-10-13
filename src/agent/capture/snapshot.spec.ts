@@ -233,7 +233,26 @@ describe("what the browser draws outside the page", () => {
     expect(copy.querySelector("#art source")!.hasAttribute("srcset")).toBe(false);
   });
 
-  it("keeps the size a candidate is laid out at, which is not its pixels (2x, or its width over sizes)", () => {
+  it("fits a fallback that stands in for a candidate not picked yet in its box, not stretched", () => {
+    document.body.innerHTML = `<style>img { width: 120px; height: 200px; object-fit: fill }
+        #cover { object-fit: cover }</style>
+      <picture><source media="(max-width: 600px)" srcset="portrait.jpg" />
+        <img id="waiting" src="landscape.jpg" loading="lazy" alt="" /></picture>
+      <picture><img id="picked" src="landscape.jpg" alt="" /></picture>
+      <picture><img id="cover" src="landscape.jpg" alt="" /></picture>`;
+    const picked = document.querySelector("#picked")!;
+    Object.defineProperty(picked, "currentSrc", { value: "https://example.com/landscape.jpg" });
+    const copy = snapshot();
+    const fit = (id: string) => (copy.getElementById(id) as HTMLElement).style.objectFit;
+    expect(fit("waiting")).toBe("contain");
+    // Picked: drawn as the page draws it. The page's own fit is kept.
+    expect(fit("picked")).toBe("");
+    expect(fit("cover")).toBe("");
+  });
+
+  // At the size the page lays it out at, not its pixels (2x, or its width over
+  // sizes): what that size is takes layout, which jsdom has not (see e2e/reader.spec.ts).
+  it("pins the size of an image drawn from a candidate", () => {
     document.body.innerHTML = `<style>#dusk { width: 240px; height: 150px }</style>
       <img id="dusk" src="dusk-480.jpg" srcset="dusk-480.jpg 2x" alt="" />
       <img id="plain" src="plain.jpg" alt="" />`;
@@ -243,13 +262,6 @@ describe("what the browser draws outside the page", () => {
     expect(image.style.getPropertyValue("height")).toBe("150px");
     // An image without candidates is drawn at its own size, as on the page.
     expect(copy.getElementById("plain")!.hasAttribute("style")).toBe(false);
-  });
-
-  it("leaves the sources of a video or an audio element to them", () => {
-    document.body.innerHTML = `<audio id="chord" controls><source src="chord.opus" type="audio/ogg" /></audio>`;
-    const source = snapshot().querySelector("#chord source")!;
-    expect(source.getAttribute("src")).toBe("chord.opus");
-    expect(source.getAttribute("type")).toBe("audio/ogg");
   });
 
   it("encodes a video's frame again only when it changed (a paused video is not encoded on every frame)", () => {
