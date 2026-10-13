@@ -332,6 +332,8 @@ describe("LiveInteractionCss", () => {
     const proto = Object.getPrototypeOf(
       (probe.cssRules[0] as CSSStyleRule).style,
     ) as CSSStyleDeclaration;
+    // Called with .call on each declaration below.
+    // oxlint-disable-next-line typescript/unbound-method -- see above
     const getPropertyValue = proto.getPropertyValue;
     vi.spyOn(proto, "getPropertyValue").mockImplementation(function (
       this: CSSStyleDeclaration,
