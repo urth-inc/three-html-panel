@@ -472,7 +472,28 @@ describe("the panel's iframe", () => {
         expect(panel.focusForTyping(new Vector2(0.9, 0.1))).toBe(false);
         expect(focus).not.toHaveBeenCalled();
         expect(panel.focusForTyping(new Vector2(0.05, 0.98))).toBe(true);
-        expect(focus).toHaveBeenCalledWith(panel, true);
+        // As a tap's: the keyboard's field is focused again if it has focus already (see PanelKeyboard.focus).
+        expect(focus).toHaveBeenCalledWith(panel, true, true);
+        port.close();
+      });
+
+      it("opens the soft keyboard for a tap on a field the page focused on its own after a press", async () => {
+        const { panel, port, focus, field } = await tapped();
+        const keys = document.querySelectorAll<HTMLTextAreaElement>("textarea[aria-hidden]");
+        const hidden = keys[keys.length - 1]!;
+        const focuses = vi.fn();
+        hidden.addEventListener("focus", focuses);
+        // The press (a channel, say) made the page focus its composer: no tap moved the focus.
+        port.postMessage(answer(true, 2));
+        await delivered();
+        expect(focus).toHaveBeenLastCalledWith(panel, true);
+        expect(document.activeElement).toBe(hidden);
+        expect(focuses).toHaveBeenCalledTimes(1);
+        // A tap on the composer focuses the keyboard's field again, while the touch is handled.
+        expect(panel.focusForTyping(field)).toBe(true);
+        expect(focuses).toHaveBeenCalledTimes(2);
+        expect(document.activeElement).toBe(hidden);
+        hidden.removeEventListener("focus", focuses);
         port.close();
       });
 
