@@ -644,10 +644,10 @@ class Snapshotter {
     const picked =
       element.hasAttribute("srcset") || element.parentElement instanceof HTMLPictureElement;
     // The candidate the browser picked. A lazy image below the host's viewport
-    // may never pick one (the frame is in view, but not on screen): show src,
-    // unless the page has no box for it (nothing to show it in, not worth a fetch).
-    const empty =
-      picked && !element.currentSrc && (style.width === "0px" || style.height === "0px");
+    // may never pick one (the frame is in view, but not on screen): src stands
+    // in, unless the page has no box for it (nothing to show it in, not worth a fetch).
+    const standIn = picked && !element.currentSrc;
+    const empty = standIn && (style.width === "0px" || style.height === "0px");
     const source = empty ? "" : element.currentSrc || element.src;
     const dataUrl = source ? this.#options.inlineImage(source) : null;
     if (dataUrl) copy.setAttribute("src", dataUrl);
@@ -661,7 +661,7 @@ class Snapshotter {
       }
       // The fallback stands in for a candidate of another shape, maybe (a
       // <source media> for narrow screens): fit it in the box, not stretched.
-      if (!element.currentSrc && style.objectFit === "fill")
+      if (standIn && style.objectFit === "fill")
         copy.style.setProperty("object-fit", "contain", "important");
     }
   }
