@@ -4,6 +4,12 @@ Changes to the `@urth/three-html-panel` package. Changes to the demo and example
 
 Each version's section is also the release notes of its [GitHub Release](https://github.com/urth-inc/three-html-panel/releases), made when its tag is pushed.
 
+## 0.2.5 - 2026-10-13
+
+### Fixed
+
+- iOS: open the soft keyboard when a text field the page focused on its own is tapped. A page that focuses a field outside a tap (an `autofocus`, or a focus after a press elsewhere) took the keyboard's hidden field outside the tap too, for which iOS shows no keyboard; a tap on the field then found it focused already and did nothing. A tap now focuses it again when no soft keyboard is up, judged by the visual viewport's height ([#84](https://github.com/urth-inc/three-html-panel/pull/84)).
+
 ## 0.2.4 - 2026-10-13
 
 ### Fixed
