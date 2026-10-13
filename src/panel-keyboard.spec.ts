@@ -182,6 +182,92 @@ describe("soft keyboards", () => {
     expect(field().getAttribute("inputmode")).toBe("none");
   });
 
+  describe("a tap on a field that has focus already", () => {
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {},
+    };
+    // jsdom has no visual viewport: one a soft keyboard shrinks, as browsers do.
+    const viewport = Object.assign(new EventTarget(), { width: 400, height: 800, scale: 1 });
+    const resize = (height: number) => {
+      viewport.height = height;
+      viewport.dispatchEvent(new Event("resize"));
+    };
+    const focuses = vi.fn();
+
+    beforeEach(() => {
+      vi.stubGlobal("visualViewport", viewport);
+      viewport.width = 400;
+      resize(800);
+      focuses.mockClear();
+      field().addEventListener("focus", focuses);
+    });
+
+    afterEach(() => {
+      field().removeEventListener("focus", focuses);
+      keyboard.release(target);
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("focuses it again if the page focused it on its own (no keyboard showed), not while one is up", () => {
+      // The page focused a field as it loaded: the keys are the panel's, but no tap moved the focus.
+      keyboard.focus(target, true);
+      expect(focuses).toHaveBeenCalledTimes(1);
+      // A tap on it moves the focus again, while the tap is handled.
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+      expect(document.activeElement).toBe(field());
+      // The keyboard is up: another tap (the caret moved) leaves it.
+      resize(450);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+      // Put away with the field still focused (an iPad): a tap brings it back.
+      resize(800);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(3);
+    });
+
+    it("tells a keyboard from a browser's bars, and not by the window's height", () => {
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(1);
+      // The address bar came back as the page scrolled: no keyboard, but too little to be one.
+      resize(740);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+      // A keyboard up where the window shrinks with it (Android): still up.
+      resize(800);
+      resize(450);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(450);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+    });
+
+    it("focuses it again after a tap with no keyboard (a hardware keyboard, since detached)", () => {
+      keyboard.focus(target, true, true);
+      // No soft keyboard came: the viewport kept its height.
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+    });
+
+    it("starts again from the new full height when the device turns", () => {
+      keyboard.focus(target, true, true);
+      // Turned: wider and shorter, with no keyboard.
+      viewport.width = 800;
+      resize(400);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+      // A keyboard up at that width.
+      resize(200);
+      keyboard.focus(target, true, true);
+      expect(focuses).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("turns Backspace and Enter that only show in beforeinput into keys", () => {
     vi.useRealTimers();
     const keys: string[] = [];

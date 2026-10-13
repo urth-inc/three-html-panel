@@ -704,7 +704,7 @@ export class HtmlPanel
       return false;
     }
     this.userActionUntil = performance.now() + USER_ACTION_MS;
-    this.keyboard.focus(this, true);
+    this.keyboard.focus(this, true, true);
     // The tap's release went out before this touchend: its answer has counted it.
     this.tapAnswerAt = this.pointersSent;
     window.clearTimeout(this.keyboardTimer);

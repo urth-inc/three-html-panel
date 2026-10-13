@@ -47,6 +47,8 @@ const FORWARDED_KEYS = new Set([
   "PageUp",
   "PageDown",
 ]);
+/** How much a soft keyboard shrinks the visual viewport at least: more than a browser's bars do. */
+const SOFT_KEYBOARD_MIN_PX = 120;
 /** beforeinput edits that soft keyboards make without telling which key it was. */
 const SOFT_KEYBOARD_KEYS: Record<string, string> = {
   deleteContentBackward: "Backspace",
@@ -70,6 +72,11 @@ export class PanelKeyboard {
   private target: KeyboardTarget | null = null;
   /** Text goes into the target: a soft keyboard may show (the field has no inputmode=none). */
   private softKeyboard = false;
+  /**
+   * The visual viewport with no soft keyboard up, as unzoomed CSS px: its
+   * width, and the largest height seen at that width (see softKeyboardUp).
+   */
+  private fullViewport = { width: 0, height: 0 };
   /** The target that was last sent composed text, until it is told composition ended. */
   private composingFor: KeyboardTarget | null = null;
   private lastHostFocus: HTMLElement | null = null;
@@ -122,6 +129,9 @@ export class PanelKeyboard {
       this.flush();
     });
     field.addEventListener("blur", () => setTimeout(this.checkFocus, 0));
+    // Its full height, seen before a soft keyboard shrinks it.
+    this.measureViewport();
+    window.visualViewport?.addEventListener("resize", () => this.measureViewport());
 
     document.addEventListener(
       "focusin",
@@ -167,14 +177,46 @@ export class PanelKeyboard {
   /**
    * Starts sending keys to `target`. `typing`: text goes in (a text field or an
    * editable has focus), so a soft keyboard shows; false for keys only (a
-   * button or a link has focus), and none shows.
+   * button or a link has focus), and none shows. `tap`: this runs while a tap
+   * is handled, the only time iOS opens its soft keyboard for focus moved.
    */
-  focus(target: KeyboardTarget, typing = true): void {
+  focus(target: KeyboardTarget, typing = true, tap = false): void {
     if (target !== this.target) this.endComposition();
     this.target = target;
     this.field.value = "";
     this.setSoftKeyboard(typing);
+    // Focused already, with no soft keyboard up: focus came outside a tap (the
+    // page focused a field on its own, as it loaded), or the keyboard was put
+    // away and the field kept focus (an iPad), or there was none to show (a
+    // hardware keyboard, since detached). A tap focuses it again, which opens one.
+    if (tap && typing && document.activeElement === this.field && !this.softKeyboardUp())
+      this.field.blur();
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true });
+  }
+
+  /** Notes the visual viewport's full height (see fullViewport): it starts again when the width changes (the device turned). */
+  private measureViewport(): void {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const width = Math.round(viewport.width * viewport.scale);
+    const height = viewport.height * viewport.scale;
+    const full = this.fullViewport;
+    if (width !== full.width) this.fullViewport = { width, height };
+    else full.height = Math.max(full.height, height);
+  }
+
+  /**
+   * Whether a soft keyboard is up: the visual viewport is well short of its
+   * full height (by more than a browser's bars, which come and go as it
+   * scrolls). Not the window's height, which some browsers shrink with it
+   * (Android's, laying the page out again). False where there is no visual
+   * viewport to tell.
+   */
+  private softKeyboardUp(): boolean {
+    const viewport = window.visualViewport;
+    if (!viewport) return false;
+    this.measureViewport();
+    return viewport.height * viewport.scale < this.fullViewport.height - SOFT_KEYBOARD_MIN_PX;
   }
 
   /** Whether text goes into `target` now, if keys go to it (see focus()). */
