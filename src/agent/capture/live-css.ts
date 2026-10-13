@@ -264,9 +264,12 @@ const SIBLING_SELECTOR = /[~+]/;
  * back on the next sync if the page replaces the list (not at once: the page
  * reads back the list it set, and one that keeps setting it does not fight
  * the agent, restyling the whole document each time).
+ *
+ * On the root only: the property is inherited, and a rule on every element
+ * would be matched against all of them on each restyle.
  */
 const LIVE_PAGE_CSS =
-  "*,::before,::after{-webkit-text-size-adjust:100%!important;text-size-adjust:100%!important}";
+  ":root{-webkit-text-size-adjust:100%!important;text-size-adjust:100%!important}";
 
 /** :has(): a rule about one element restyles any other. */
 const HAS_SELECTOR = /:has\(/;
@@ -283,6 +286,9 @@ export function hasTransition(style: CSSStyleDeclaration): boolean {
     style.getPropertyValue("transition-duration") || style.getPropertyValue("transition");
   return /[1-9]|var\(/.test(duration);
 }
+
+/** A document, with adoptedStyleSheets where the browser has them. */
+type AdoptingDocument = Document & { adoptedStyleSheets?: CSSStyleSheet[] };
 
 export class LiveInteractionCss {
   /**
@@ -507,8 +513,11 @@ export class LiveInteractionCss {
 
   /** The document's adoptedStyleSheets; undefined where there are none (jsdom). */
   #adoptedSheets(): CSSStyleSheet[] | undefined {
-    return (this.#document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
-      .adoptedStyleSheets;
+    return (this.#document as AdoptingDocument).adoptedStyleSheets;
+  }
+
+  #setAdoptedSheets(sheets: CSSStyleSheet[]): void {
+    (this.#document as AdoptingDocument).adoptedStyleSheets = sheets;
   }
 
   #pageAdoptedList(adopted: readonly CSSStyleSheet[] | undefined): readonly CSSStyleSheet[] {
@@ -661,10 +670,7 @@ export class LiveInteractionCss {
     const syncing = this.#syncing;
     this.#syncing = true;
     try {
-      (this.#document as Document & { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets = [
-        ...adopted,
-        sheet,
-      ];
+      this.#setAdoptedSheets([...adopted, sheet]);
     } finally {
       this.#syncing = syncing;
     }
@@ -673,9 +679,7 @@ export class LiveInteractionCss {
   #unadopt(): void {
     const adopted = this.#adoptedSheets();
     const current = this.#adopted;
-    if (current && adopted)
-      (this.#document as Document & { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets =
-        adopted.filter((sheet) => sheet !== current);
+    if (current && adopted) this.#setAdoptedSheets(adopted.filter((sheet) => sheet !== current));
     this.#adopted = null;
     this.#adoptedCss = "";
   }
