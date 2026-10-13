@@ -23,6 +23,12 @@ export type PanelInput =
       metaKey?: boolean;
       /** What drives the pointer; a mouse if not given. */
       input?: PointerInput;
+      /**
+       * With a press: how far (CSS px of the page) it may move and still be a
+       * tap, as far as a finger or controller wobbles on screen, which the host
+       * knows from how large it draws the page. The page's own slop if not given.
+       */
+      slop?: number;
     }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
   | {

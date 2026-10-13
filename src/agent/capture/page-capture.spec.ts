@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { DocumentCss } from "./css";
 import { LiveInteractionCss } from "./live-css";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
@@ -66,6 +67,71 @@ it("skips unchanged hover by default, but dispatches events and captures enterin
   capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
   await settle();
   expect(frames.at(-1)).not.toContain("data-thp-hover");
+});
+
+describe("an indeterminate <progress>", () => {
+  /** A progress the browser draws, at `top` in a 300x150 viewport (jsdom lays nothing out). */
+  function progressAt(top: number, visible = true): HTMLProgressElement {
+    const progress = document.createElement("progress");
+    progress.getBoundingClientRect = () => new DOMRect(0, top, 100, 10);
+    progress.checkVisibility = () => visible;
+    document.body.append(progress);
+    return progress;
+  }
+  /** How many captures a second of waiting makes. */
+  async function capturesInASecond(): Promise<number> {
+    await settle();
+    const count = captures.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    return captures.mock.calls.length - count;
+  }
+
+  it("keeps the panel capturing while one shows, to draw it moving", async () => {
+    Object.assign(window, { innerWidth: 300, innerHeight: 150 });
+    progressAt(20);
+    capture.start();
+    expect(await capturesInASecond()).toBeGreaterThan(10);
+  });
+
+  it("does not while it is hidden, out of view, or has a value", async () => {
+    Object.assign(window, { innerWidth: 300, innerHeight: 150 });
+    const hidden = progressAt(20, false);
+    const below = progressAt(500);
+    const done = progressAt(20);
+    done.value = 1;
+    capture.start();
+    expect(await capturesInASecond()).toBe(0);
+    hidden.checkVisibility = () => true;
+    below.remove();
+    done.remove();
+    capture.handle({ type: "blur" });
+    expect(await capturesInASecond()).toBeGreaterThan(10);
+  });
+});
+
+describe("rules whose values the CSSOM lost", () => {
+  it("finds their elements again when the DOM or a control's state changes, not on every capture", async () => {
+    vi.spyOn(DocumentCss.prototype, "lost", "get").mockReturnValue([
+      { selector: ".lost", properties: ["border-top-width"] },
+    ]);
+    const query = vi.spyOn(document, "querySelectorAll");
+    const queries = () => query.mock.calls.filter(([selector]) => selector === ".lost").length;
+    capture.start();
+    await settle();
+    expect(queries()).toBe(1);
+    // A scroll captures again, with the same elements.
+    window.dispatchEvent(new Event("scroll"));
+    await settle();
+    expect(captures).toHaveBeenCalled();
+    expect(queries()).toBe(1);
+    hit.textContent = "Changed";
+    await settle();
+    expect(queries()).toBe(2);
+    // :checked changes with no attribute.
+    hit.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(queries()).toBe(3);
+  });
 });
 
 it("still captures DOM changes from same-target pointer handlers", async () => {

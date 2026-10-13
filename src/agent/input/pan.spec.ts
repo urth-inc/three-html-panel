@@ -77,10 +77,11 @@ describe("dragging to scroll", () => {
     pointer("down", 60);
     pointer("move", 55);
     expect(box.scrollTop).toBe(0);
+    // From where it left the 8 px slop, not by it at once.
     pointer("move", 40);
-    expect(box.scrollTop).toBe(20);
+    expect(box.scrollTop).toBe(12);
     pointer("move", 30);
-    expect(box.scrollTop).toBe(30);
+    expect(box.scrollTop).toBe(22);
     pointer("up", 30);
     // The page saw the drag start, then a cancel; no up, no click.
     expect(events.filter((type) => type !== "pointermove")).toEqual([
@@ -89,10 +90,31 @@ describe("dragging to scroll", () => {
     ]);
   });
 
+  it("waits for the host's slop, where it is more than its own (a panel drawn small)", () => {
+    input.handle({ type: "pointer", kind: "down", x: 50, y: 60, input: "touch", slop: 30 });
+    pointer("move", 40);
+    expect(box.scrollTop).toBe(0);
+    pointer("up", 40);
+    // (Each test's listeners stay on the document: each event is there as often.)
+    expect(events).toContain("click");
+    expect(events).not.toContain("pointercancel");
+    // Past it, it scrolls; and the next press has the page's own slop again.
+    events.length = 0;
+    input.handle({ type: "pointer", kind: "down", x: 50, y: 60, input: "touch", slop: 30 });
+    pointer("move", 20);
+    expect(box.scrollTop).toBe(10);
+    pointer("up", 20);
+    box.scrollTop = 0;
+    pointer("down", 60);
+    pointer("move", 40);
+    expect(box.scrollTop).toBe(12);
+    pointer("up", 40);
+  });
+
   it("scrolls with a VR controller too, but not with a mouse", () => {
     pointer("down", 60, "xr");
     pointer("move", 30, "xr");
-    expect(box.scrollTop).toBe(30);
+    expect(box.scrollTop).toBe(22);
     pointer("up", 30, "xr");
     box.scrollTop = 0;
     pointer("down", 60, "mouse");
@@ -155,7 +177,7 @@ describe("dragging to scroll", () => {
       expect(input.focused).not.toBe(button);
       pointer("move", 30);
       pointer("up", 30);
-      expect(box.scrollTop).toBe(30);
+      expect(box.scrollTop).toBe(22);
       expect(log).toEqual(["pointerdown", "pointercancel"]);
       expect(input.focused).not.toBe(button);
     });
@@ -198,6 +220,35 @@ describe("dragging to scroll", () => {
       pointer("move", 30);
       pointer("up", 30);
       expect(log).toEqual(["pointerdown", "pointerup"]);
+    });
+
+    it("takes two taps as far apart as the host's slop for a double click", () => {
+      const doubles: Event[] = [];
+      const record = (event: Event) => doubles.push(event);
+      document.addEventListener("dblclick", record);
+      const tap = (y: number) => {
+        input.handle({ type: "pointer", kind: "down", x: 50, y, input: "touch", slop: 20 });
+        input.handle({ type: "pointer", kind: "up", x: 50, y, input: "touch", slop: 20 });
+      };
+      tap(60);
+      tap(45);
+      document.removeEventListener("dblclick", record);
+      expect(doubles).toHaveLength(1);
+    });
+
+    it("gives the page every move where the drag is its own, and a tap within the host's slop a click", () => {
+      button.style.touchAction = "none";
+      input.handle({ type: "pointer", kind: "down", x: 50, y: 60, input: "touch", slop: 20 });
+      pointer("move", 58);
+      pointer("up", 48);
+      expect(log).toEqual([
+        "pointerdown",
+        "mousedown",
+        "mousemove",
+        "pointerup",
+        "mouseup",
+        "click",
+      ]);
     });
 
     it("sends mousedown at once where the drag is the page's (touch-action: none), with its mouseup", () => {

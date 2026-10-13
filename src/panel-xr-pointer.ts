@@ -3,7 +3,9 @@
 // - A controller's ray hovers a panel; the trigger (select) presses it.
 // - While pressed, moves go to that panel even off its edges, and a drag
 //   scrolls it like a finger does (the page gets input "xr", see
-//   agent/input/pan.ts).
+//   agent/input/pan.ts). A press says how far the ray turning
+//   TAP_SLOP_RADIANS goes in the page (its slop): on a panel far away or drawn
+//   small, a hand's tremor is many px of the page.
 // - The thumbstick scrolls the panel under the controller, like a wheel.
 // - Pressing anything but a panel ends typing into the panels.
 //
@@ -13,7 +15,7 @@
 //
 // Call update() once per frame, in the animation loop.
 
-import { Raycaster, Vector2, type WebGLRenderer, type XRTargetRaySpace } from "three";
+import { Ray, Raycaster, Vector2, Vector3, type WebGLRenderer, type XRTargetRaySpace } from "three";
 import type { HtmlPanel } from "./html-panel";
 import type { PanelXRKeyboard } from "./panel-xr-keyboard";
 
@@ -21,6 +23,8 @@ import type { PanelXRKeyboard } from "./panel-xr-keyboard";
 const STICK_DEAD_ZONE = 0.15;
 /** CSS pixels per second at full deflection. */
 const STICK_SCROLL_SPEED = 900;
+/** How far (about 1°) a controller's ray may turn during a press that is still a click. */
+const TAP_SLOP_RADIANS = 0.017;
 
 interface Controller {
   space: XRTargetRaySpace;
@@ -134,11 +138,11 @@ export class PanelXRPointer {
     return this.raycaster.intersectObject(keyboard, false)[0]?.uv ?? null;
   }
 
-  private pick(controller: Controller): { panel: HtmlPanel; uv: Vector2 } | null {
+  private pick(controller: Controller): { panel: HtmlPanel; uv: Vector2; ray: Ray } | null {
     this.raycaster.setFromXRController(controller.space);
     const hit = this.raycaster.intersectObjects(this.panels() as HtmlPanel[], false)[0];
     if (!hit?.uv) return null;
-    return { panel: hit.object as HtmlPanel, uv: hit.uv };
+    return { panel: hit.object as HtmlPanel, uv: hit.uv, ray: this.raycaster.ray.clone() };
   }
 
   private press(controller: Controller): void {
@@ -155,7 +159,8 @@ export class PanelXRPointer {
     if (!hit) return;
     this.pressed = { panel: hit.panel, controller };
     this.hover({ panel: hit.panel, controller });
-    hit.panel.pointer("down", hit.uv, false, "xr");
+    const slop = hit.panel.slopFor(hit.uv, slopRays(hit.ray));
+    hit.panel.pointer("down", hit.uv, false, "xr", { slop });
   }
 
   private release(controller: Controller): void {
@@ -176,6 +181,18 @@ export class PanelXRPointer {
     this.hovered?.panel.pointer("leave");
     this.hovered = next;
   }
+}
+
+/** `ray` turned TAP_SLOP_RADIANS two ways across itself (see HtmlPanel.slopFor). */
+function slopRays(ray: Ray): Ray[] {
+  const { origin, direction } = ray;
+  const across = new Vector3(0, 1, 0).cross(direction);
+  if (across.lengthSq() < 1e-6) across.set(1, 0, 0).cross(direction);
+  across.normalize();
+  const other = direction.clone().cross(across).normalize();
+  return [across, other].map(
+    (axis) => new Ray(origin.clone(), direction.clone().applyAxisAngle(axis, TAP_SLOP_RADIANS)),
+  );
 }
 
 const deadZone = (value: number) => (Math.abs(value) < STICK_DEAD_ZONE ? 0 : value);

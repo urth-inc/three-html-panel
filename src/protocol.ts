@@ -289,7 +289,7 @@ export function parseHostMessage(data: unknown): HostMessage | null {
   if (!isObject(data)) return null;
   switch (data.type) {
     case "pointer": {
-      const { kind, x, y, shiftKey, ctrlKey, metaKey, input } = data;
+      const { kind, x, y, shiftKey, ctrlKey, metaKey, input, slop } = data;
       if (!POINTER_KINDS.has(kind as PointerKind) || !isFiniteNumber(x) || !isFiniteNumber(y))
         return null;
       if (
@@ -298,6 +298,7 @@ export function parseHostMessage(data: unknown): HostMessage | null {
         return null;
       if (input !== undefined && input !== "mouse" && input !== "touch" && input !== "xr")
         return null;
+      if (slop !== undefined && !(isFiniteNumber(slop) && slop >= 0)) return null;
       return {
         type: "pointer",
         kind: kind as PointerKind,
@@ -307,6 +308,7 @@ export function parseHostMessage(data: unknown): HostMessage | null {
         ctrlKey: ctrlKey === true,
         metaKey: metaKey === true,
         input: input ?? "mouse",
+        ...(slop === undefined ? {} : { slop }),
       };
     }
     case "wheel": {

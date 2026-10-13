@@ -287,6 +287,8 @@ interface Pan {
   last: { x: number; y: number };
   /** It has started scrolling (and the page got pointercancel). */
   active: boolean;
+  /** How far it moves before it scrolls: PAN_START_DISTANCE, or the host's slop if more. */
+  slop: number;
 }
 
 interface Press {
@@ -296,6 +298,8 @@ interface Press {
   moved: boolean;
   /** False when the page cancelled pointerdown, which suppresses the mouse events. */
   mouseEvents: boolean;
+  /** How far the host says the press may wobble (CSS px of the page), see PanelInput's slop. */
+  hostSlop: number;
   /**
    * The mousedown held back while a finger or controller drag may still scroll:
    * like a touch in browsers, the mouse events (and focusing) come only if the
@@ -313,12 +317,16 @@ const changed = (before: readonly boolean[], select: HTMLSelectElement) =>
 /**
  * Whether a press moved too far to be a click. A held-back finger or controller
  * press is a tap for as long as it does not scroll: until it moves
- * PAN_START_DISTANCE along an axis.
+ * PAN_START_DISTANCE along an axis. Either is at least what the host says a
+ * finger or controller wobbles on screen: on a panel drawn small, a few px of
+ * the screen are many of the page.
  */
 function movedOff(press: Press, x: number, y: number): boolean {
   const dx = Math.abs(x - press.x);
   const dy = Math.abs(y - press.y);
-  return press.deferred ? Math.max(dx, dy) >= PAN_START_DISTANCE : Math.hypot(dx, dy) > CLICK_SLOP;
+  return press.deferred
+    ? Math.max(dx, dy) >= Math.max(PAN_START_DISTANCE, press.hostSlop)
+    : Math.hypot(dx, dy) > Math.max(CLICK_SLOP, press.hostSlop);
 }
 
 export class InputSynthesizer {
@@ -465,6 +473,7 @@ export class InputSynthesizer {
             input.shiftKey === true,
             input.input ?? "mouse",
             toggle,
+            input.slop ?? 0,
           );
         } else if (input.kind === "move") {
           // Hovering, the pointer may be another one now (a mouse after a finger).
@@ -976,6 +985,7 @@ export class InputSynthesizer {
     shiftKey: boolean,
     input: PointerInput = "mouse",
     toggle = false,
+    hostSlop = 0,
   ): void {
     this.#pointer = { x, y };
     this.#pointerInput = input;
@@ -998,8 +1008,11 @@ export class InputSynthesizer {
     }
     const now = performance.now();
     const last = this.#lastDown;
+    // As far apart as a tap may wobble (see movedOff): on a panel drawn small, a second tap is many px off.
     const count =
-      last && now - last.time < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP
+      last &&
+      now - last.time < DOUBLE_CLICK_MS &&
+      Math.hypot(x - last.x, y - last.y) <= Math.max(CLICK_SLOP, hostSlop)
         ? last.count + 1
         : 1;
     this.#lastDown = { time: now, x, y, count };
@@ -1012,9 +1025,9 @@ export class InputSynthesizer {
 
     const init = this.#pointerInit(x, y, 1);
     const pointerOk = target.dispatchEvent(this.#pointerEvent("pointerdown", init));
-    this.#press = { target, x, y, moved: false, mouseEvents: pointerOk, deferred: null };
+    this.#press = { target, x, y, moved: false, mouseEvents: pointerOk, deferred: null, hostSlop };
     // A finger or controller drag scrolls, unless the page took the press (cancelled it).
-    if (input !== "mouse" && pointerOk) this.#pan = this.#startPan(target, x, y);
+    if (input !== "mouse" && pointerOk) this.#pan = this.#startPan(target, x, y, hostSlop);
     if (this.#pan) {
       this.#press.deferred = { detail: count, shiftKey, toggle };
       return;
@@ -1226,7 +1239,7 @@ export class InputSynthesizer {
     const isDouble =
       last !== null &&
       now - last.time < DOUBLE_CLICK_MS &&
-      Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP;
+      Math.hypot(x - last.x, y - last.y) <= Math.max(CLICK_SLOP, press.hostSlop);
     clickTarget.dispatchEvent(this.#pointerEvent("click", { ...init, detail: isDouble ? 2 : 1 }));
     if (isDouble) {
       clickTarget.dispatchEvent(this.#mouseEvent("dblclick", { ...init, detail: 2 }));
@@ -1303,7 +1316,7 @@ export class InputSynthesizer {
   // --- Drag scrolling ---------------------------------------------------------
 
   /** What a drag from `target` would scroll, and in which directions; null if nothing. */
-  #startPan(target: Element, x: number, y: number): Pan | null {
+  #startPan(target: Element, x: number, y: number, hostSlop: number): Pan | null {
     const touchActions = ancestors(target).map(
       (element) => this.#window.getComputedStyle(element).touchAction ?? "",
     );
@@ -1311,7 +1324,8 @@ export class InputSynthesizer {
     if (!axes.x && !axes.y) return null;
     const scroller = this.#panScroller(target, axes);
     if (!scroller) return null;
-    return { target, scroller, axes, start: { x, y }, last: { x, y }, active: false };
+    const slop = Math.max(PAN_START_DISTANCE, hostSlop);
+    return { target, scroller, axes, start: { x, y }, last: { x, y }, active: false, slop };
   }
 
   /** The nearest element that can scroll in an allowed direction, or the document's scroller. */
@@ -1340,12 +1354,18 @@ export class InputSynthesizer {
     if (!pan.active) {
       const dx = pan.axes.x ? Math.abs(x - pan.start.x) : 0;
       const dy = pan.axes.y ? Math.abs(y - pan.start.y) : 0;
-      if (Math.max(dx, dy) < PAN_START_DISTANCE) return false;
+      if (Math.max(dx, dy) < pan.slop) return false;
       // Browsers send pointercancel when a touch turns into a scroll.
       pan.active = true;
       this.#textDrag = null;
       this.#documentDrag = null;
       pan.target.dispatchEvent(this.#pointerEvent("pointercancel", this.#pointerInit(x, y, 0)));
+      // It scrolls from where it left the slop, as browsers do: not by the slop at once.
+      const within = (moved: number) => Math.sign(moved) * Math.min(Math.abs(moved), pan.slop);
+      pan.last = {
+        x: pan.start.x + within(x - pan.start.x),
+        y: pan.start.y + within(y - pan.start.y),
+      };
     }
     scrollByUser(pan.scroller, pan.axes.x ? pan.last.x - x : 0, pan.axes.y ? pan.last.y - y : 0);
     pan.last = { x, y };

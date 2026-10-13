@@ -2,6 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   inlineCssUrls,
   liveSelector,
+  declarationsOf,
+  lostProperties,
+  nestedSelector,
+  parseInto,
+  splitSelectorList,
+  splitStatements,
   rewriteSelector,
   signatureParts,
   stylesheetsSignature,
@@ -148,5 +154,105 @@ describe("inlineCssUrls", () => {
         () => null,
       ),
     ).toBe('a{background:url("data:image/gif;base64,R0")}');
+  });
+});
+
+describe("lostProperties", () => {
+  it("finds the longhands a var() shorthand left empty, not custom properties set empty", () => {
+    // As browsers have `border: 3px solid var(--a); border-top-color: red; --b: ;`.
+    const declarations: Record<string, string> = {
+      width: "1px",
+      "border-top-width": "",
+      "border-top-style": "",
+      "border-top-color": "red",
+      "--b": "",
+    };
+    const names = Object.keys(declarations);
+    const style = {
+      length: names.length,
+      item: (index: number) => names[index]!,
+      getPropertyValue: (name: string) => declarations[name] ?? "",
+    } as unknown as CSSStyleDeclaration;
+    expect(lostProperties(style)).toEqual(["border-top-width", "border-top-style"]);
+  });
+});
+
+describe("nestedSelector", () => {
+  it("makes a nested rule's selector a top-level one", () => {
+    expect(nestedSelector(null, ".a")).toBe(".a");
+    expect(nestedSelector(".a, .b", "&:hover > i")).toBe(":is(.a, .b):hover > i");
+    expect(nestedSelector(".a", ".c, .d")).toBe(":is(.a) :is(.c, .d)");
+  });
+});
+
+describe("splitStatements", () => {
+  it("splits at the end of each top-level rule, not inside blocks, strings, comments or url()s", () => {
+    const css = `@import "a;b.css"; /* } ; */ .a{x:"}";y:url(a;b{.png)} @media all{.b{z:1}} @layer c;`;
+    expect(splitStatements(css).map((part) => part.text)).toEqual([
+      `@import "a;b.css";`,
+      `/* } ; */ .a{x:"}";y:url(a;b{.png)}`,
+      "@media all{.b{z:1}}",
+      "@layer c;",
+    ]);
+    expect(splitStatements(" .a {x:1}")[0]!.open).toBe(3);
+  });
+});
+
+describe("parseInto and declarationsOf", () => {
+  /**
+   * A sheet that parses as browsers do here: each `selector{…}` a style rule,
+   * at-rules left out, and a rule with var() losing its values (lostProperties).
+   */
+  class FakeSheet {
+    cssRules: object[] = [];
+    replaceSync(text: string) {
+      this.cssRules = splitStatements(text)
+        .filter(({ text, open }) => open >= 0 && !text.startsWith("@"))
+        .map(({ text, open }) => {
+          const selectorText = text.slice(0, open).trim();
+          const lossy = text.includes("var(");
+          const names = lossy ? ["border-top-style"] : [];
+          return {
+            selectorText,
+            cssText: `${selectorText} { … }`,
+            cssRules: [],
+            style: {
+              cssText: lossy ? "border-top-style: ;" : "color: red;",
+              length: names.length,
+              item: (index: number) => names[index],
+              getPropertyValue: () => "",
+            },
+          };
+        });
+    }
+  }
+  const parse = (css: string) => {
+    const sheet = new FakeSheet() as unknown as CSSStyleSheet;
+    parseInto(sheet, css);
+    return Array.from(sheet.cssRules) as CSSStyleRule[];
+  };
+
+  it("keeps a rule's declarations as written, used where the CSSOM lost some", () => {
+    const [lossy, plain] = parse(
+      `@import "x.css"; .a { border: 1px solid var(--a); border-top-color: red } .b{color:red}`,
+    );
+    expect(declarationsOf(lossy!)).toBe(" border: 1px solid var(--a); border-top-color: red ");
+    expect(declarationsOf(plain!)).toBe("color: red;");
+  });
+
+  it("gives each of two rules with the same text its own block, in order", () => {
+    const [first, second] = parse(`.a{border:1px solid var(--a)} .a{border:2px solid var(--b)}`);
+    expect(declarationsOf(first!)).toBe("border:1px solid var(--a)");
+    expect(declarationsOf(second!)).toBe("border:2px solid var(--b)");
+  });
+});
+
+describe("splitSelectorList", () => {
+  it("splits at top-level commas only", () => {
+    expect(splitSelectorList(`.a, :is(.b, .c) > d, [e=","]::after`)).toEqual([
+      ".a",
+      ":is(.b, .c) > d",
+      `[e=","]::after`,
+    ]);
   });
 });

@@ -25,7 +25,14 @@ import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
 import type { SelectionBox } from "../input/selection";
 import { topLayerStates } from "../input/top-layer";
-import { MODAL_ATTRIBUTE, POPOVER_OPEN_ATTRIBUTE } from "./css";
+import {
+  MODAL_ATTRIBUTE,
+  POPOVER_OPEN_ATTRIBUTE,
+  inlineCssUrls,
+  liveSelector,
+  splitSelectorList,
+  type LostDeclarations,
+} from "./css";
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
@@ -79,6 +86,8 @@ export interface SnapshotOptions {
   listBox?: Element | null;
   /** When each open popover and dialog was opened (0 if not seen): the top layer is stacked in that order. */
   openedAt?: (element: Element) => number;
+  /** The elements of the page's rules whose values its CSSOM lost (matchLostDeclarations): copied as computed. */
+  lost?: LostMatches;
 }
 
 /** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
@@ -215,6 +224,80 @@ function collectAnimatedValues(document: Document): Map<Element, Map<string, str
     }
   }
   return result;
+}
+
+/**
+ * Whether an element is an indeterminate <progress> (one with no value) the
+ * browser draws, moving by itself. One the page styles itself (appearance:
+ * none) is the page's to draw, as it is.
+ */
+export const isIndeterminateProgress = (window: FrameWindow, element: Element) =>
+  element instanceof window.HTMLProgressElement &&
+  !element.hasAttribute("value") &&
+  window.getComputedStyle(element).appearance !== "none";
+/** How long the bar of an indeterminate <progress> takes to cross it (ms), and how much of it it covers. */
+const INDETERMINATE_PERIOD_MS = 2000;
+const INDETERMINATE_BAR = 0.3;
+/** Where the page leaves accent-color to the browser. */
+const DEFAULT_ACCENT_COLOR = "#0075ff";
+/** Marks the copies of elements whose pseudo-elements' rules lost values (see copyLostPseudoValues). */
+const LOST_ATTRIBUTE = "data-thp-lost";
+/** Marks the copy of an indeterminate <progress>, drawn by the agent (see copyIndeterminateProgress). */
+const INDETERMINATE_ATTRIBUTE = "data-thp-indeterminate";
+/**
+ * Its own look goes: what is left is its box (its border too, unseen, so that
+ * it keeps its size), with the track and the bar as its background. Each
+ * pseudo-element in a rule of its own: a rule with one a browser does not know
+ * is dropped whole.
+ */
+const INDETERMINATE_RULES = [
+  `[${INDETERMINATE_ATTRIBUTE}]{appearance:none!important;border-color:transparent!important;border-image:none!important}`,
+  `[${INDETERMINATE_ATTRIBUTE}]::-webkit-progress-bar{background:transparent!important}`,
+  `[${INDETERMINATE_ATTRIBUTE}]::-webkit-progress-value{background:transparent!important}`,
+  `[${INDETERMINATE_ATTRIBUTE}]::-moz-progress-bar{background:transparent!important}`,
+];
+
+/**
+ * The elements the rules whose values the CSSOM lost (DocumentCss.lost) are
+ * for, and what they lost: by pseudo-element ("" for the element itself).
+ */
+export type LostMatches = Map<Element, Map<string, readonly string[]>>;
+
+/** Pseudo-elements whose computed style can be read, at the end of a selector (`:before` as in CSS 2). */
+const LOST_PSEUDO_ELEMENT = /::?(before|after)$|::(marker|placeholder|backdrop)$/i;
+
+/**
+ * Finds the elements of the rules whose values the CSSOM lost. Each is copied
+ * with its own computed values, so one a rule does not match after all (a
+ * selector that only approximates a nested or scoped rule's) is copied as it
+ * is anyway. Selectors are matched as on the live page (:hover also matches
+ * its attribute, see liveSelector); those that are not selectors on their
+ * own (a nested rule's relative one) are left as the page's CSS has them.
+ */
+export function matchLostDeclarations(
+  document: Document,
+  lost: readonly LostDeclarations[],
+): LostMatches {
+  const matches: LostMatches = new Map();
+  for (const { selector, properties } of lost) {
+    for (const part of splitSelectorList(selector)) {
+      const pseudo = LOST_PSEUDO_ELEMENT.exec(part);
+      const elementSelector = pseudo ? part.slice(0, pseudo.index).trim() || "*" : part;
+      let elements: NodeListOf<Element>;
+      try {
+        elements = document.querySelectorAll(liveSelector(elementSelector) ?? elementSelector);
+      } catch {
+        continue;
+      }
+      const key = pseudo ? `::${(pseudo[1] ?? pseudo[2])!.toLowerCase()}` : "";
+      for (const element of elements) {
+        let byPseudo = matches.get(element);
+        if (!byPseudo) matches.set(element, (byPseudo = new Map()));
+        byPseudo.set(key, [...new Set([...(byPseudo.get(key) ?? []), ...properties])]);
+      }
+    }
+  }
+  return matches;
 }
 
 /** An absolute or fixed element's copy, and its containing block on the page (see Snapshotter.absoluteContainer). */
@@ -476,6 +559,10 @@ class Snapshotter {
   #fixedContainer: Element | null = null;
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
+  /** Whether INDETERMINATE_RULES are among generatedRules. */
+  #indeterminateRules = false;
+  /** The copies marked with LOST_ATTRIBUTE so far. */
+  #lostMarks = 0;
   /** Open popovers and modal dialogs, in the order copied: the page's top layer (see liftToTopLayer). */
   readonly topLayer: { live: Element; copy: HTMLElement }[] = [];
 
@@ -487,6 +574,14 @@ class Snapshotter {
     this.#options = options;
     this.#window = document.defaultView as FrameWindow;
     this.#animated = collectAnimatedValues(document);
+    for (const [element, byPseudo] of options.lost ?? []) {
+      const properties = byPseudo.get("");
+      if (!properties) continue;
+      let values = this.#animated.get(element);
+      if (!values) this.#animated.set(element, (values = new Map()));
+      // Unless an animation sets it.
+      for (const property of properties) if (!values.has(property)) values.set(property, null);
+    }
   }
 
   copy(live: Node): Node | null {
@@ -510,6 +605,8 @@ class Snapshotter {
     this.#copyFormState(element, copy);
     this.#copyImage(element, copy, style);
     this.#copyAnimatedValues(element, copy);
+    this.#copyLostPseudoValues(element, copy);
+    this.#copyIndeterminateProgress(element, copy, style);
     this.#markTopLayer(element, copy);
 
     // <head> carries no visible content, but keep the element so the structure stays valid.
@@ -752,8 +849,69 @@ class Snapshotter {
     const computed = this.#window.getComputedStyle(element);
     for (const [property, value] of values) {
       const baked = value ?? computed.getPropertyValue(property);
-      if (baked) copy.style.setProperty(property, baked, "important");
+      if (baked) copy.style.setProperty(property, this.#inlineUrls(baked), "important");
     }
+  }
+
+  /** A value with its url()s inlined: the image loads nothing. */
+  #inlineUrls(value: string): string {
+    return value.includes("url(")
+      ? inlineCssUrls(value, this.#document.baseURI, this.#options.inlineImage)
+      : value;
+  }
+
+  /**
+   * The values a pseudo-element's rule lost (matchLostDeclarations), as
+   * computed: a pseudo-element has no inline style, so they go in a rule of
+   * their own for this copy (marked to be told from the others).
+   */
+  #copyLostPseudoValues(element: Element, copy: Element): void {
+    const byPseudo = this.#options.lost?.get(element);
+    if (!byPseudo) return;
+    let mark: string | null = null;
+    for (const [pseudo, properties] of byPseudo) {
+      if (!pseudo) continue;
+      const computed = this.#window.getComputedStyle(element, pseudo);
+      const declarations = properties
+        .map((property) => [property, computed.getPropertyValue(property)] as const)
+        .filter(([, value]) => value)
+        .map(([property, value]) => `${property}:${this.#inlineUrls(value)}!important`);
+      if (declarations.length === 0) continue;
+      if (mark === null) {
+        mark = String(this.#lostMarks++);
+        copy.setAttribute(LOST_ATTRIBUTE, mark);
+      }
+      this.generatedRules.push(`[${LOST_ATTRIBUTE}="${mark}"]${pseudo}{${declarations.join(";")}}`);
+    }
+  }
+
+  /**
+   * An indeterminate <progress> moves by itself, as no image of it does (an
+   * image is drawn once, and the page does not change meanwhile). The copy is
+   * drawn instead, as a bar sliding across a track, where it is now; the
+   * capture goes on while one shows (see PageCapture).
+   */
+  #copyIndeterminateProgress(element: Element, copy: Element, style: CSSStyleDeclaration): void {
+    if (!isIndeterminateProgress(this.#window, element) || !isStyled(copy)) return;
+    if (!this.#indeterminateRules) {
+      this.generatedRules.push(...INDETERMINATE_RULES);
+      this.#indeterminateRules = true;
+    }
+    const width = element.clientWidth;
+    const bar = width * INDETERMINATE_BAR;
+    const phase =
+      (this.#window.performance.now() % INDETERMINATE_PERIOD_MS) / INDETERMINATE_PERIOD_MS;
+    const accent =
+      style.accentColor && style.accentColor !== "auto" ? style.accentColor : DEFAULT_ACCENT_COLOR;
+    copy.setAttribute(INDETERMINATE_ATTRIBUTE, "");
+    copy.style.setProperty(
+      "background",
+      `linear-gradient(${accent},${accent}) ${phase * (width + bar) - bar}px 0/${bar}px 100% no-repeat,` +
+        "color-mix(in srgb,currentColor 15%,transparent)",
+      "important",
+    );
+    if (style.borderTopLeftRadius === "0px")
+      copy.style.setProperty("border-radius", `${element.clientHeight / 2}px`, "important");
   }
 
   #copyScroll(element: Element, copy: Element): void {

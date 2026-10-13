@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { pageStylesheets } from "./css";
+import { pageStylesheets, parseInto } from "./css";
 import { hasTransition, LiveInteractionCss } from "./live-css";
 
 let live: LiveInteractionCss | null = null;
@@ -314,6 +314,47 @@ describe("LiveInteractionCss", () => {
       expect(
         (document as unknown as { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets,
       ).toHaveLength(0);
+    } finally {
+      delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
+    }
+  });
+
+  it("copies an interaction rule whose values the CSSOM lost as the sheet wrote it", () => {
+    Object.defineProperty(document, "adoptedStyleSheets", {
+      configurable: true,
+      writable: true,
+      value: [],
+    });
+    try {
+      document.head.innerHTML = "<style>.tools { display: none }</style>";
+      document.body.innerHTML = ROW;
+      const text =
+        ".row:hover .tools { .icon { color: red } border: 1px solid var(--c); border-top-color: red }" +
+        " .tip:hover { border: 2px solid var(--c); .x:focus { color: blue } }";
+      const copy = new CSSStyleSheet();
+      parseInto(copy, text);
+      // As browsers have them: the shorthand's longhands lost (jsdom keeps them).
+      for (const rule of Array.from(copy.cssRules) as CSSStyleRule[]) {
+        const style = rule.style;
+        Object.defineProperty(style, "length", { value: 1 });
+        Object.defineProperty(style, "item", { value: () => "border-top-style" });
+        Object.defineProperty(style, "getPropertyValue", { value: () => "" });
+        Object.defineProperty(style, "cssText", { value: "border-top-style: ;" });
+      }
+      live = new LiveInteractionCss(document, (sheet) =>
+        sheet === document.styleSheets[0] ? copy : null,
+      );
+      live.sync();
+      const adopted = (document as unknown as { adoptedStyleSheets: CSSStyleSheet[] })
+        .adoptedStyleSheets;
+      const css = Array.from(adopted[0]!.cssRules, (rule) => rule.cssText).join(" ");
+      expect(css).toContain(".row:is(:hover,[data-thp-hover]) .tools");
+      expect(css).toContain("var(--c)");
+      // A nested rule to rewrite: the CSSOM's rules, rewritten one by one (what it lost, lost).
+      expect(css).toContain(".x:is(:focus,[data-thp-focus])");
+      expect(css).not.toContain("2px");
+      live.dispose();
+      live = null;
     } finally {
       delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
     }

@@ -164,6 +164,179 @@ export const FREEZE_ANIMATIONS_CSS =
 
 const URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
 
+/** Properties a style rule sets that its CSSOM has lost (see lostProperties), and the elements it is for. */
+export interface LostDeclarations {
+  selector: string;
+  properties: string[];
+}
+
+/**
+ * The properties a rule's declarations set whose values the CSSOM has lost. A
+ * shorthand with var() in it is kept whole (to be substituted when computed),
+ * and only while each of its longhands still has it: once a later declaration
+ * in the rule sets one of them (`border: … var(--a); border-top-color: red`),
+ * every browser gives the others as "" (`border-top-style: ;` in cssText). The
+ * value is then nowhere but in the computed style of the elements.
+ */
+export function lostProperties(style: CSSStyleDeclaration): string[] {
+  const lost: string[] = [];
+  for (let i = 0; i < style.length; i++) {
+    const property = style.item(i);
+    if (!property.startsWith("--") && style.getPropertyValue(property) === "") lost.push(property);
+  }
+  return lost;
+}
+
+/**
+ * The blocks of top-level style rules parsed from a fetched stylesheet's text
+ * (see DocumentCss.readable), as written between their braces: lossless where
+ * the CSSOM is not (lostProperties).
+ */
+const sourceBlocks = new WeakMap<CSSRule, string>();
+
+/**
+ * A style rule's block as the stylesheet wrote it (its declarations and nested
+ * rules), if that is known and the CSSOM lost some of its values (in it or in
+ * declarations between its nested rules); null otherwise.
+ */
+export function writtenBlockOf(rule: CSSStyleRule): string | null {
+  const block = sourceBlocks.get(rule);
+  if (block === undefined) return null;
+  const lost = (rule: CSSRule): boolean =>
+    ("style" in rule && lostProperties((rule as CSSStyleRule).style).length > 0) ||
+    // Declarations between nested rules (CSSNestedDeclarations) are the rule's too.
+    Array.from((rule as Partial<CSSStyleRule>).cssRules ?? []).some(
+      (inner) => !("selectorText" in inner) && lost(inner),
+    );
+  return lost(rule) ? block : null;
+}
+
+/**
+ * A style rule's declarations as text: as the CSSOM gives them, or, if it lost
+ * some (lostProperties), as the stylesheet wrote them where that is known (a
+ * rule without nested rules, whose block is its declarations).
+ */
+export function declarationsOf(rule: CSSRule & { style: CSSStyleDeclaration }): string {
+  if ((rule as Partial<CSSStyleRule>).cssRules?.length) return rule.style.cssText;
+  return writtenBlockOf(rule as CSSStyleRule) ?? rule.style.cssText;
+}
+
+/**
+ * Splits CSS text at the end of each top-level statement (a rule with its
+ * block, or an at-rule ending with ";"), skipping comments, strings and
+ * unquoted url()s. Each part's block, if any, starts at `open` (its "{").
+ * Only to find the text of rules: the browser's parser decides what they are.
+ */
+export function splitStatements(text: string): { text: string; open: number }[] {
+  const out: { text: string; open: number }[] = [];
+  let start = 0;
+  let depth = 0;
+  let open = -1;
+  const end = (at: number) => {
+    const part = text.slice(start, at);
+    const trimmed = part.trimStart();
+    if (trimmed)
+      out.push({
+        text: trimmed,
+        open: open < 0 ? -1 : open - start - (part.length - trimmed.length),
+      });
+    start = at;
+    open = -1;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]!;
+    if (char === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      i = close < 0 ? text.length : close + 1;
+    } else if (char === '"' || char === "'") {
+      for (i++; i < text.length && text[i] !== char && text[i] !== "\n"; i++)
+        if (text[i] === "\\") i++;
+    } else if (char === "\\") {
+      i++;
+    } else if (
+      (char === "u" || char === "U") &&
+      !/[\w-]/.test(text[i - 1] ?? "") &&
+      /^url\(\s*[^\s"')]/i.test(text.slice(i, i + 6))
+    ) {
+      const close = text.indexOf(")", i);
+      i = close < 0 ? text.length : close;
+    } else if (char === "{") {
+      if (depth++ === 0) open = i;
+    } else if (char === "}") {
+      if (depth > 0 && --depth === 0) end(i + 1);
+    } else if (char === ";" && depth === 0) {
+      end(i + 1);
+    }
+  }
+  end(text.length);
+  return out;
+}
+
+/** A style rule, checked by shape (the sheet may be another realm's). */
+const isStyleRule = (rule: CSSRule | undefined): rule is CSSStyleRule =>
+  !!rule && "selectorText" in rule && "style" in rule;
+
+/**
+ * Parses CSS text into `sheet` (replaceSync, which leaves out @import), and
+ * keeps the blocks of its top-level style rules as written (see
+ * writtenBlockOf). Only those with var() in them can lose values. Each is
+ * found by parsing its statement alone: the rule it makes is the sheet's
+ * with the same text, so a statement split apart differently from the
+ * browser's parser (after a stray token) matches no rule and is left out.
+ */
+export function parseInto(sheet: CSSStyleSheet, text: string): void {
+  sheet.replaceSync(text);
+  const written = new Map<string, string[]>();
+  let scratch: CSSStyleSheet | null = null;
+  for (const { text: statement, open } of splitStatements(text)) {
+    if (open < 0 || !statement.includes("var(")) continue;
+    scratch ??= new (sheet.constructor as typeof CSSStyleSheet)();
+    scratch.replaceSync(statement);
+    const rule = scratch.cssRules[0];
+    if (scratch.cssRules.length !== 1 || !isStyleRule(rule)) continue;
+    const close = statement.lastIndexOf("}");
+    const block = statement.slice(open + 1, close > open ? close : undefined);
+    const blocks = written.get(rule.cssText);
+    if (blocks) blocks.push(block);
+    else written.set(rule.cssText, [block]);
+  }
+  if (written.size === 0) return;
+  for (const rule of Array.from(sheet.cssRules)) {
+    if (!isStyleRule(rule)) continue;
+    const block = written.get(rule.cssText)?.shift();
+    if (block !== undefined) sourceBlocks.set(rule, block);
+  }
+}
+
+/** The selectors of a selector list, split at its top-level commas. */
+export function splitSelectorList(selector: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]!;
+    if (char === "\\") i++;
+    else if (char === '"' || char === "'") {
+      for (i++; i < selector.length && selector[i] !== char; i++) if (selector[i] === "\\") i++;
+    } else if (char === "(" || char === "[") depth++;
+    else if (char === ")" || char === "]") depth--;
+    else if (char === "," && depth === 0) {
+      out.push(selector.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(selector.slice(start).trim());
+  return out.filter(Boolean);
+}
+
+/** The selector of a nested style rule (`&` or a descendant of its parent's), as a top-level one. */
+export function nestedSelector(parent: string | null, selector: string): string {
+  if (parent === null) return selector;
+  return selector.includes("&")
+    ? selector.replaceAll("&", `:is(${parent})`)
+    : `:is(${parent}) :is(${selector})`;
+}
+
 /**
  * Replaces url(...) references, made absolute against `baseUrl`, with what
  * `resolve` returns for them (e.g. a data URL), or `none`.
@@ -294,6 +467,7 @@ export class DocumentCss {
   /** Null until collected (a page without stylesheets has the signature ""). */
   #signature: string | null = null;
   #css: readonly string[] = [];
+  #lost: LostDeclarations[] = [];
   /**
    * The lists of rules inside the sheets (of blocks, nested rules, imported
    * sheets) as they were collected, with how many rules each had: rules
@@ -337,6 +511,7 @@ export class DocumentCss {
     const changedInside = this.#inner.some(({ rules, length }) => rules.length !== length);
     if (signature !== this.#signature || changedInside) {
       this.#inner = [];
+      this.#lost = [];
       const out: string[][] = [[DEFAULT_FOCUS_RING_CSS]];
       for (const sheet of sheets) this.#serializeSheet(sheet, out);
       out.push([FREEZE_ANIMATIONS_CSS]);
@@ -356,6 +531,14 @@ export class DocumentCss {
       this.#signature = signature;
     }
     return this.#css;
+  }
+
+  /**
+   * The rules among those get() collected whose values the CSSOM lost (see
+   * lostProperties): the copy takes them from the computed style.
+   */
+  get lost(): readonly LostDeclarations[] {
+    return this.#lost;
   }
 
   /**
@@ -399,11 +582,13 @@ export class DocumentCss {
     sheets.push(inLayers(rules, layers));
   }
 
+  /** `parent`: the selector of the style rule these are nested in (as a top-level one), if any. */
   #serializeRules(
     rules: ArrayLike<CSSRule>,
     out: string[],
     sheets: string[][],
     layers: string[],
+    parent: string | null = null,
   ): void {
     const {
       CSSStyleRule,
@@ -421,22 +606,24 @@ export class DocumentCss {
       const block = (rule as Partial<CSSGroupingRule>).cssRules;
       if (block && (block.length > 0 || !(rule instanceof CSSStyleRule))) this.#watch(block);
       if (rule instanceof CSSStyleRule) {
+        const selector = nestedSelector(parent, rule.selectorText);
+        this.#noteLost(rule, selector);
         if (rule.cssRules.length === 0) {
-          out.push(`${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`);
+          out.push(`${rewriteSelector(rule.selectorText)}{${declarationsOf(rule)}}`);
           continue;
         }
         // Nested rules (CSS nesting) are copied as the top level's, inside it.
         const inner: string[] = [];
-        this.#serializeRules(rule.cssRules, inner, sheets, layers);
+        this.#serializeRules(rule.cssRules, inner, sheets, layers, selector);
         out.push(
           `${rewriteSelector(rule.selectorText)} {${rule.style.cssText}\n${inner.join("\n")}\n}`,
         );
       } else if (rule instanceof CSSMediaRule) {
         if (this.#window.matchMedia(rule.conditionText).matches)
-          this.#serializeRules(rule.cssRules, out, sheets, layers);
+          this.#serializeRules(rule.cssRules, out, sheets, layers, parent);
       } else if (rule instanceof CSSSupportsRule) {
         if (CSS.supports(rule.conditionText))
-          this.#serializeRules(rule.cssRules, out, sheets, layers);
+          this.#serializeRules(rule.cssRules, out, sheets, layers, parent);
       } else if (rule instanceof CSSImportRule) {
         const sheet = rule.styleSheet;
         // Its conditions: media, and supports() (newer browsers).
@@ -459,13 +646,23 @@ export class DocumentCss {
         // Other blocks of rules (@layer, @container, @scope…): their rules as
         // the top level's (interaction states, @media checked here), in them.
         const inner: string[] = [];
-        this.#serializeRules(rule.cssRules, inner, sheets, layers);
+        this.#serializeRules(rule.cssRules, inner, sheets, layers, parent);
         const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{")).trim();
         out.push(`${rewriteSelector(prelude)} {\n${inner.join("\n")}\n}`);
       } else {
+        // Declarations between nested rules (CSSNestedDeclarations) are its parent's.
+        if (parent !== null && "style" in rule) this.#noteLost(rule as CSSStyleRule, parent);
         out.push(rule.cssText);
       }
     }
+  }
+
+  /** Takes note of a rule whose values the CSSOM lost (unless its declarations are known as written). */
+  #noteLost(rule: CSSRule & { style: CSSStyleDeclaration }, selector: string): void {
+    // Copied as written (declarationsOf).
+    if (declarationsOf(rule) !== rule.style.cssText) return;
+    const properties = lostProperties(rule.style);
+    if (properties.length > 0) this.#lost.push({ selector, properties });
   }
 
   #watch(rules: CSSRuleList): void {
@@ -491,8 +688,8 @@ export class DocumentCss {
         .then((text) => {
           // Parse in the page's realm, so the rules pass the type checks above.
           const parsed = new this.#window.CSSStyleSheet();
-          // replaceSync ignores @import; enough for this purpose.
-          parsed.replaceSync(text);
+          // Without @import, as replaceSync; enough for this purpose.
+          parseInto(parsed, text);
           this.#fetched.set(href, parsed);
           this.invalidate();
           this.#onChange();
