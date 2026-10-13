@@ -156,7 +156,7 @@ function tabOrderOf(document: Document, elements: HTMLElement[]): HTMLElement[] 
   // Each tree's entries, in the order drawn: its elements, and the hosts of the trees in it.
   const entries = new Map<Node, Set<Element>>();
   for (const element of elements) {
-    for (let node: Element = element; ; ) {
+    for (let node: Element = element; ;) {
       const tree = node.getRootNode();
       let inTree = entries.get(tree);
       if (!inTree) entries.set(tree, (inTree = new Set()));
