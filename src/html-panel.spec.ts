@@ -219,7 +219,7 @@ describe("the panel's iframe", () => {
       panel.pointer("down", new Vector2(0.5, 0.5));
       port.postMessage(editing);
       await delivered();
-      expect(focus).toHaveBeenCalledWith(panel);
+      expect(focus).toHaveBeenCalledWith(panel, true);
       port.close();
     });
 
@@ -241,7 +241,7 @@ describe("the panel's iframe", () => {
       panel.pointer("move", new Vector2(0.4, 0.5));
       port.postMessage(selecting);
       await delivered();
-      expect(focus).toHaveBeenCalledWith(panel);
+      expect(focus).toHaveBeenCalledWith(panel, true);
       expect(received).not.toContainEqual({ type: "blur" });
 
       // Released: moving over the panel afterwards is hovering, not acting on it.
@@ -284,6 +284,29 @@ describe("the panel's iframe", () => {
       expect(focus).not.toHaveBeenCalled();
       expect(nextReceived).toContainEqual({ type: "blur" });
       next.close();
+      port.close();
+    });
+
+    it("shows no soft keyboard for a button or a link with focus, until a text field has it", async () => {
+      const keyboard = new PanelKeyboard();
+      const focus = vi.spyOn(keyboard, "focus");
+      const setTyping = vi.spyOn(keyboard, "setTyping");
+      const panel = open(false, keyboard);
+      const port = connect(panel);
+      // A button has focus: its keys (Enter, Space, Tab) go to the page, no text.
+      port.postMessage({ ...editing, caret: null, typing: false });
+      await delivered();
+      expect(focus).toHaveBeenCalledWith(panel, false);
+      // Then a text field.
+      port.postMessage(editing);
+      await delivered();
+      expect(setTyping).toHaveBeenLastCalledWith(panel, true);
+      // And a button again.
+      port.postMessage({ ...editing, caret: null, typing: false });
+      await delivered();
+      expect(setTyping).toHaveBeenLastCalledWith(panel, false);
+      expect(focus).toHaveBeenCalledTimes(1);
+      keyboard.release(panel);
       port.close();
     });
 
@@ -435,7 +458,7 @@ describe("the panel's iframe", () => {
         expect(panel.focusForTyping(new Vector2(0.9, 0.1))).toBe(false);
         expect(focus).not.toHaveBeenCalled();
         expect(panel.focusForTyping(new Vector2(0.05, 0.98))).toBe(true);
-        expect(focus).toHaveBeenCalledWith(panel);
+        expect(focus).toHaveBeenCalledWith(panel, true);
         port.close();
       });
 
@@ -501,7 +524,7 @@ describe("the panel's iframe", () => {
       const port = connect(panel);
       port.postMessage(editing);
       await delivered();
-      expect(focus).toHaveBeenCalledWith(panel);
+      expect(focus).toHaveBeenCalledWith(panel, true);
       port.close();
     });
   });

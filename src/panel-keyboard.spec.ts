@@ -124,6 +124,12 @@ describe("IME composition", () => {
     expect(target.calls.at(-1)).toEqual(["composition", "", 0]);
   });
 
+  it("ends the composition when no more text goes in (focus moved to a button)", () => {
+    compose("に");
+    keyboard.setTyping(target, false);
+    expect(target.calls.at(-1)).toEqual(["composition", "", 0]);
+  });
+
   it("places the hidden field at the caret, and back in the corner when released", () => {
     keyboard.placeIme({ x: 120, y: 80, height: 20 });
     expect(field().style.left).toBe("120px");
@@ -144,6 +150,36 @@ describe("soft keyboards", () => {
     keyboard.placeIme({ x: 1, y: 1, height: 10 });
     keyboard.placeIme(null);
     expect(field().style.fontSize).toBe("16px");
+  });
+
+  it("shows only for a target that takes text, not keys alone (a button in the page)", () => {
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {},
+    };
+    expect(field().getAttribute("inputmode")).toBe("none");
+    keyboard.focus(target, false);
+    expect(document.activeElement).toBe(field());
+    expect(field().getAttribute("inputmode")).toBe("none");
+
+    // A text field gets focus: the field is focused again, which opens the soft keyboard.
+    const focus = vi.spyOn(field(), "focus");
+    keyboard.setTyping(target, true);
+    expect(field().hasAttribute("inputmode")).toBe(false);
+    expect(focus).toHaveBeenCalled();
+    expect(document.activeElement).toBe(field());
+    focus.mockRestore();
+
+    keyboard.setTyping(target, false);
+    expect(field().getAttribute("inputmode")).toBe("none");
+    keyboard.focus(target);
+    expect(field().hasAttribute("inputmode")).toBe(false);
+    keyboard.release(target);
+    expect(field().getAttribute("inputmode")).toBe("none");
   });
 
   it("turns Backspace and Enter that only show in beforeinput into keys", () => {

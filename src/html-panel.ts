@@ -307,7 +307,7 @@ export class HtmlPanel
         this.editables = [];
         this.pointersSent = 0;
         this.tapAnswerAt = null;
-        this.setEditing(false, null);
+        this.setEditing(false, null, false);
         this.setCursor("default");
         // A new document starts shown.
         if (!this.shown) this.send({ type: "visibility", visible: false });
@@ -317,9 +317,7 @@ export class HtmlPanel
       onEditing: (editing, caret, selectedText, pointers, typing) => {
         this.selected = editing ? selectedText : "";
         this.answerTap(editing, pointers);
-        this.setEditing(editing, caret);
-        // isTyping also needs the keys to be the panel's (a sandboxed page may have been refused them).
-        this.typing = typing;
+        this.setEditing(editing, caret, typing);
       },
       onCursor: (cursor) => this.setCursor(cursor),
       onEditables: (boxes) => (this.editables = boxes),
@@ -331,7 +329,7 @@ export class HtmlPanel
       onMessage: (data) => options.onMessage?.(data),
       onError: (error) => {
         this.renderer.clear();
-        this.setEditing(false, null);
+        this.setEditing(false, null, false);
         this.onError(error);
       },
     });
@@ -467,7 +465,8 @@ export class HtmlPanel
     this.dispatchEvent({ type: "cursorchange" });
   }
 
-  private setEditing(editing: boolean, caret: Caret | null): void {
+  /** `typing`: text goes in (a text field or an editable has focus), not only keys (a button). */
+  private setEditing(editing: boolean, caret: Caret | null, typing: boolean): void {
     if (editing && !this.editing && !this.mayTakeKeyboard()) {
       // A sandboxed page focused a field on its own (or says it did: the page
       // runs the agent and can send anything). It must not take the keys the
@@ -478,11 +477,14 @@ export class HtmlPanel
     }
     if (editing && !this.editing) {
       this.imePlacement = "";
-      this.keyboard.focus(this);
+      this.keyboard.focus(this, typing);
+    } else if (editing && typing !== this.typing) {
+      this.keyboard.setTyping(this, typing);
     }
     if (!editing && this.editing) this.keyboard.release(this);
     this.editing = editing;
-    if (!editing) this.typing = false;
+    // isTyping also needs the keys to be the panel's (a sandboxed page may have been refused them).
+    this.typing = editing && typing;
     this.updateCaret(caret);
   }
 
@@ -661,7 +663,7 @@ export class HtmlPanel
       return false;
     }
     this.userActionUntil = performance.now() + USER_ACTION_MS;
-    this.keyboard.focus(this);
+    this.keyboard.focus(this, true);
     // The tap's release went out before this touchend: its answer has counted it.
     this.tapAnswerAt = this.pointersSent;
     window.clearTimeout(this.keyboardTimer);
