@@ -191,11 +191,7 @@ export class PanelKeyboard {
     // hardware keyboard, since detached). A tap focuses it again, which opens one.
     if (tap && typing && document.activeElement === this.field && !this.softKeyboardUp())
       this.field.blur();
-    if (document.activeElement !== this.field) this.focusField();
-  }
-
-  private focusField(): void {
-    this.field.focus({ preventScroll: true });
+    if (document.activeElement !== this.field) this.field.focus({ preventScroll: true });
   }
 
   /** Notes the visual viewport's full height (see fullViewport): it starts again when the width changes (the device turned). */
@@ -260,7 +256,7 @@ export class PanelKeyboard {
     // when this runs for a tap (HtmlPanel.focusForTyping).
     if (document.activeElement === field) {
       field.blur();
-      this.focusField();
+      field.focus({ preventScroll: true });
     }
   }
 
@@ -354,13 +350,13 @@ export class PanelKeyboard {
     if (frame) {
       // A panel took focus: give it back, to the hidden field while typing into
       // a panel, or else where focus was in the host.
-      if (this.target) this.focusField();
+      if (this.target) this.field.focus({ preventScroll: true });
       else if (this.lastHostFocus?.isConnected) this.lastHostFocus.focus({ preventScroll: true });
       // With nowhere to go, a sandboxed panel loses focus all the same. A
       // trusted one is left the hidden field, as before (the page's focus is
       // virtual anyway, see input/input.ts).
       else if (frame.sandboxed) (active as HTMLIFrameElement).blur();
-      else this.focusField();
+      else this.field.focus({ preventScroll: true });
       return;
     }
     if (!this.target || active === this.field) return;
@@ -368,7 +364,7 @@ export class PanelKeyboard {
       // Focus is in transit (a panel iframe in another process takes it
       // asynchronously), or the user clicked something that cannot be focused.
       // Neither ends editing; pressing outside the panels in the scene does.
-      if (document.hasFocus()) this.focusField();
+      if (document.hasFocus()) this.field.focus({ preventScroll: true });
       return;
     }
     if (document.hasFocus()) {
