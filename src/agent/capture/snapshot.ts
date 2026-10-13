@@ -24,7 +24,7 @@
 // Their elements are copied as computed (see copyShadowStyle).
 
 import type { Box, FrameWindow } from "../../types";
-import { flatChildren, flatParent } from "../flat-tree";
+import { flatChildren, flatParent, rememberShadowRoot, shadowRootOf } from "../flat-tree";
 import { scrolledText } from "../input/caret";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
@@ -95,6 +95,27 @@ export interface SnapshotOptions {
   lost?: LostMatches;
   /** Told of each shadow root copied (to watch it for changes, which the page's document does not show). */
   shadowRoot?: (root: ShadowRoot) => void;
+  /** The styles copyShadowStyle computed, to use again in later snapshots while their version stays. */
+  shadowStyles?: ShadowStyles;
+}
+
+/**
+ * The styles of copies drawn in shadow trees (see copyShadowStyle), kept from
+ * one snapshot to the next: computing them reads every property of every
+ * element. Whoever snapshots changes `version` when they may have changed
+ * (the page did, or its layout); a frame taken only to show an animation
+ * moving keeps it, and computes again only what is animated.
+ */
+export interface ShadowStyles {
+  version: string;
+  readonly computed: WeakMap<Element, ShadowStyle>;
+}
+
+/** An element's style, and its ::before's and ::after's (those it has), as copyShadowStyle writes them. */
+interface ShadowStyle {
+  version: string;
+  style: string;
+  pseudo: [pseudo: string, declarations: string][];
 }
 
 /** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
@@ -618,6 +639,8 @@ class Snapshotter {
   #shadowRules = false;
   /** The copies whose pseudo-elements have rules of their own (see copyShadowStyle) so far. */
   #shadowMarks = 0;
+  /** The elements being animated (see animatedTargets), found once the first copy drawn in a shadow tree needs them. */
+  #animating: Set<Element> | null = null;
   /** Open popovers and modal dialogs, in the order copied: the page's top layer (see liftToTopLayer). */
   readonly topLayer: { live: Element; copy: HTMLElement }[] = [];
 
@@ -651,8 +674,9 @@ class Snapshotter {
     const style = this.#window.getComputedStyle(element);
     this.#styles.set(element, style);
     // A host and everything drawn in it.
-    const inShadow = this.#inShadow || element.shadowRoot !== null;
-    if (element.shadowRoot) this.#options.shadowRoot?.(element.shadowRoot);
+    const shadowRoot = shadowRootOf(element);
+    const inShadow = this.#inShadow || shadowRoot !== null;
+    if (shadowRoot) this.#foundShadowRoot(shadowRoot);
 
     if (element instanceof this.#window.HTMLCanvasElement)
       return this.#remember(
@@ -704,6 +728,32 @@ class Snapshotter {
     return copy;
   }
 
+  /** Notes a shadow root copied: for the flat tree (an open one), whoever snapshots, and its animations. */
+  #foundShadowRoot(root: ShadowRoot): void {
+    rememberShadowRoot(root);
+    this.#options.shadowRoot?.(root);
+    // jsdom has none.
+    if (typeof root.getAnimations !== "function") return;
+    // The document's do not include those in shadow trees.
+    for (const animation of root.getAnimations()) {
+      const target = (animation.effect as KeyframeEffect | null)?.target;
+      if (target) this.#animatedTargets().add(target);
+    }
+  }
+
+  /** The elements being animated (transitions too), whose computed styles change from frame to frame. */
+  #animatedTargets(): Set<Element> {
+    if (!this.#animating) {
+      this.#animating = new Set();
+      if (typeof this.#document.getAnimations === "function")
+        for (const animation of this.#document.getAnimations()) {
+          const target = (animation.effect as KeyframeEffect | null)?.target;
+          if (target) this.#animating.add(target);
+        }
+    }
+    return this.#animating;
+  }
+
   /** A copy, styled as computed if it is drawn in a shadow tree (see copyShadowStyle). */
   #inShadowStyle<T extends Node | null>(
     inShadow: boolean,
@@ -739,28 +789,44 @@ class Snapshotter {
       this.generatedRules.push(...SHADOW_RULES);
       this.#shadowRules = true;
     }
-    const initial = initialValues(this.#window);
-    const declarations = (computed: CSSStyleDeclaration) => {
-      const declared: string[] = [];
-      for (const property of Array.from(computed)) {
-        if (UNCOPIED_PROPERTY.test(property)) continue;
-        const value = computed.getPropertyValue(property);
-        if (value && value !== initial.get(property))
-          declared.push(`${property}:${this.#inlineUrls(value)}!important`);
-      }
-      return declared;
-    };
-    copy.setAttribute("style", declarations(style).join(";"));
+    const cache = this.#options.shadowStyles;
+    let computed = cache?.computed.get(element);
+    if (!computed || computed.version !== cache!.version || this.#animatedTargets().has(element)) {
+      computed = this.#computeShadowStyle(element, style, cache?.version ?? "");
+      cache?.computed.set(element, computed);
+    }
+    copy.setAttribute("style", computed.style);
     let mark = "";
-    for (const pseudo of ["::before", "::after"]) {
-      const computed = this.#window.getComputedStyle(element, pseudo);
-      if (computed.content === "none" || computed.content === "normal") continue;
+    for (const [pseudo, declarations] of computed.pseudo) {
       if (!mark) mark = String(++this.#shadowMarks);
       this.generatedRules.push(
-        `[${SHADOW_ATTRIBUTE}="${mark}"]${pseudo}{all:initial!important;${declarations(computed).join(";")}}`,
+        `[${SHADOW_ATTRIBUTE}="${mark}"]${pseudo}{all:initial!important;${declarations}}`,
       );
     }
     copy.setAttribute(SHADOW_ATTRIBUTE, mark);
+  }
+
+  /** What copyShadowStyle writes for an element: each value not at its initial one. */
+  #computeShadowStyle(element: Element, style: CSSStyleDeclaration, version: string): ShadowStyle {
+    const initial = initialValues(this.#window);
+    const declarations = (computed: CSSStyleDeclaration) => {
+      const declared: string[] = [];
+      // The properties every element has: those the probe has.
+      for (const [property, initialValue] of initial) {
+        if (UNCOPIED_PROPERTY.test(property)) continue;
+        const value = computed.getPropertyValue(property);
+        if (value && value !== initialValue)
+          declared.push(`${property}:${this.#inlineUrls(value)}!important`);
+      }
+      return declared.join(";");
+    };
+    const pseudo: ShadowStyle["pseudo"] = [];
+    for (const name of ["::before", "::after"]) {
+      const computed = this.#window.getComputedStyle(element, name);
+      if (computed.content !== "none" && computed.content !== "normal")
+        pseudo.push([name, declarations(computed)]);
+    }
+    return { version, style: declarations(style), pseudo };
   }
 
   /**
@@ -1769,13 +1835,16 @@ function inlineBackgroundImages(
  * is drawn, its children are).
  */
 function isRendered(element: Element): boolean {
-  const view = element.ownerDocument.defaultView!;
-  if (view.getComputedStyle(element).display === "none") return false;
-  for (let parent = flatParent(element); parent; parent = flatParent(parent)) {
-    const style = view.getComputedStyle(parent);
+  const { documentElement, defaultView: view } = element.ownerDocument;
+  if (view!.getComputedStyle(element).display === "none") return false;
+  let node = element;
+  for (let parent = flatParent(node); parent; parent = flatParent(parent)) {
+    const style = view!.getComputedStyle(parent);
     if (style.display === "none" || style.contentVisibility === "hidden") return false;
+    node = parent;
   }
-  return true;
+  // Up to the page's root: not a host's child assigned to no slot, which is not drawn.
+  return node === documentElement;
 }
 
 /** Marks the stand-ins liftToTopLayer moves a top layer element with, and the element. */

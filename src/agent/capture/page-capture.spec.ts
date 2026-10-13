@@ -5,6 +5,9 @@ import { LiveInteractionCss } from "./live-css";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
 
+/** The browser's, before any PageCapture wraps it. */
+// oxlint-disable-next-line typescript/unbound-method -- put back on the prototype
+const nativeAttachShadow = Element.prototype.attachShadow;
 let capture: PageCapture;
 let hit: Element;
 let frames: string[];
@@ -480,6 +483,28 @@ describe("interaction states in the live page", () => {
     expect(captures).toHaveBeenCalledTimes(count + 1);
     expect(frames.at(-1)).toContain("Inside");
   });
+
+  /* oxlint-disable typescript/unbound-method -- compared and put back, not called */
+  it("puts attachShadow back when disposed, and does nothing more through a page's wrapper over it", async () => {
+    capture.start();
+    await settle();
+    expect(Element.prototype.attachShadow).not.toBe(nativeAttachShadow);
+    // The page wraps it again, after the agent.
+    const agents = Element.prototype.attachShadow;
+    const pages = function (this: Element, init: ShadowRootInit) {
+      return agents.call(this, init);
+    };
+    Element.prototype.attachShadow = pages;
+    capture.dispose();
+    expect(Element.prototype.attachShadow).toBe(pages);
+    const count = captures.mock.calls.length;
+    const root = document.querySelector(".row")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<b>After</b>`;
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count);
+    Element.prototype.attachShadow = nativeAttachShadow;
+  });
+  /* oxlint-enable typescript/unbound-method */
 
   it("captures a change the page makes through the CSSOM only", async () => {
     capture.start();

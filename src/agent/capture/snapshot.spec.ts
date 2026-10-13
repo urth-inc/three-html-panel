@@ -222,8 +222,9 @@ describe("shadow roots", () => {
   it("replaces the style of what is drawn in one with the computed values: its var()s would find nothing", () => {
     document.body.innerHTML = `<x-card id="host"></x-card>`;
     const host = document.querySelector("#host")!;
-    host.attachShadow({ mode: "open" }).innerHTML =
-      `<div id="inner" style="--accent: red; color: var(--accent) !important"></div>`;
+    host.attachShadow({
+      mode: "open",
+    }).innerHTML = `<div id="inner" style="--accent: red; color: var(--accent) !important"></div>`;
     document.getAnimations = () => [];
     const roots: ShadowRoot[] = [];
     const xhtml = snapshotDocument(document, {
@@ -234,6 +235,24 @@ describe("shadow roots", () => {
     // (jsdom computes no var(), as browsers do.)
     expect(copy.getElementById("inner")!.getAttribute("style")).not.toMatch(/--accent\s*:/);
     expect(roots).toEqual([host.shadowRoot]);
+  });
+
+  it("computes the styles again only when their version changes", () => {
+    document.body.innerHTML = `<x-card id="host"></x-card>`;
+    const root = document.querySelector("#host")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<div id="inner"></div>`;
+    document.getAnimations = () => [];
+    const shadowStyles = { version: "1", computed: new WeakMap() };
+    const display = () => {
+      const xhtml = snapshotDocument(document, { inlineImage: () => null, shadowStyles });
+      const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+      return (copy.getElementById("inner") as HTMLElement).style.getPropertyValue("display");
+    };
+    expect(display()).toBe("block");
+    root.querySelector<HTMLElement>("#inner")!.style.display = "flex";
+    expect(display()).toBe("block");
+    shadowStyles.version = "2";
+    expect(display()).toBe("flex");
   });
 });
 

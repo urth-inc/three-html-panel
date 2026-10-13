@@ -40,6 +40,7 @@ import {
   flatParent,
   querySelectorAllInFlatTree,
   retarget,
+  shadowRootOf,
 } from "../flat-tree";
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
@@ -142,6 +143,46 @@ const isEditingHost = (element: Element | null): element is HTMLElement =>
  */
 function scrollByUser(element: Element, left: number, top: number): void {
   element.scrollBy({ left, top, behavior: "instant" });
+}
+
+/**
+ * Focusable elements (in the order drawn) in tab order, as browsers have it:
+ * in each tree on its own, a positive tabindex first (by its value), then the
+ * others in their order. A shadow root's take its host's place in its tree
+ * (right after the host, if it takes focus itself), at the host's tabindex.
+ */
+function tabOrderOf(document: Document, elements: HTMLElement[]): HTMLElement[] {
+  const focusable = new Set<Element>(elements);
+  // Each tree's entries, in the order drawn: its elements, and the hosts of the trees in it.
+  const entries = new Map<Node, Set<Element>>();
+  for (const element of elements) {
+    for (let node: Element = element; ; ) {
+      const tree = node.getRootNode();
+      let inTree = entries.get(tree);
+      if (!inTree) entries.set(tree, (inTree = new Set()));
+      if (inTree.has(node)) break;
+      inTree.add(node);
+      if (tree.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) break;
+      node = (tree as ShadowRoot).host;
+    }
+  }
+  const tabIndex = (entry: Element) =>
+    focusable.has(entry) || entry.hasAttribute("tabindex")
+      ? Math.max(0, (entry as HTMLElement).tabIndex)
+      : 0;
+  const order = (tree: Node): HTMLElement[] => {
+    const inTree = Array.from(entries.get(tree) ?? []);
+    const positive = inTree.filter((entry) => tabIndex(entry) > 0);
+    positive.sort((a, b) => tabIndex(a) - tabIndex(b));
+    return [...positive, ...inTree.filter((entry) => tabIndex(entry) === 0)].flatMap((entry) => {
+      const root = shadowRootOf(entry);
+      return [
+        ...(focusable.has(entry) ? [entry as HTMLElement] : []),
+        ...(root ? order(root) : []),
+      ];
+    });
+  };
+  return order(document);
 }
 
 /** An element and its ancestors, in the flat tree (a press in a shadow root is in its host too). */
@@ -259,7 +300,8 @@ export class VirtualFocus {
     this.#onMove();
     const { FocusEvent } = this.#window;
     if (previous) {
-      previous.dispatchEvent(new FocusEvent("blur", { relatedTarget: element }));
+      // Composed, as the browser's: a host hears of focus moving in its shadow root.
+      previous.dispatchEvent(new FocusEvent("blur", { composed: true, relatedTarget: element }));
       previous.dispatchEvent(
         new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: element }),
       );
@@ -272,7 +314,7 @@ export class VirtualFocus {
         if (selection && !(selection.rangeCount > 0 && element.contains(selection.anchorNode)))
           selection.collapse(element, 0);
       }
-      element.dispatchEvent(new FocusEvent("focus", { relatedTarget: previous }));
+      element.dispatchEvent(new FocusEvent("focus", { composed: true, relatedTarget: previous }));
       element.dispatchEvent(
         new FocusEvent("focusin", { bubbles: true, composed: true, relatedTarget: previous }),
       );
@@ -1711,7 +1753,8 @@ export class InputSynthesizer {
 
   #radioGroup(radio: HTMLInputElement): HTMLInputElement[] {
     if (!radio.name) return [radio];
-    const scope = radio.form ?? radio.ownerDocument;
+    // In its form, or in its tree (a shadow root's radios are a group of their own).
+    const scope = radio.form ?? (radio.getRootNode() as Document | ShadowRoot);
     return Array.from(scope.querySelectorAll<HTMLInputElement>("input[type=radio]")).filter(
       (other) => other.name === radio.name && other.form === radio.form,
     );
@@ -1765,10 +1808,7 @@ export class InputSynthesizer {
       }
       return true;
     }) as HTMLElement[];
-    const positive = candidates
-      .filter((element) => element.tabIndex > 0)
-      .sort((a, b) => a.tabIndex - b.tabIndex);
-    return [...positive, ...candidates.filter((element) => element.tabIndex === 0)];
+    return tabOrderOf(this.#document, candidates);
   }
 
   #stateOf(field: TextField): FieldState {

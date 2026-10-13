@@ -6,7 +6,9 @@ import {
   flatChildren,
   flatParent,
   querySelectorAllInFlatTree,
+  rememberShadowRoot,
   retarget,
+  shadowRootOf,
 } from "./flat-tree";
 
 afterEach(() => {
@@ -74,6 +76,7 @@ describe("deepElementFromPoint", () => {
 describe("querySelectorAllInFlatTree", () => {
   it("finds what is drawn, in the order drawn: a shadow root's, a host's children at their slot", () => {
     const { root } = host();
+    rememberShadowRoot(root);
     root.prepend(Object.assign(document.createElement("b"), { id: "first" }));
     const ids = querySelectorAllInFlatTree(document.documentElement, "[id]").map(
       (element) => element.id,
@@ -89,5 +92,19 @@ describe("retarget", () => {
     expect(retarget(button, document)).toBe(element);
     expect(retarget(button, root)).toBe(button);
     expect(retarget(element, root)).toBeNull();
+  });
+});
+
+describe("a closed shadow root the agent was given", () => {
+  it("is walked as an open one, its slots too", () => {
+    document.body.innerHTML = `<x-host id="host"><span id="light">Label</span></x-host>`;
+    const element = document.querySelector("#host")!;
+    const root = element.attachShadow({ mode: "closed" });
+    root.innerHTML = `<button id="button"><slot id="slot"></slot></button>`;
+    expect(shadowRootOf(element)).toBeNull();
+    rememberShadowRoot(root);
+    expect(shadowRootOf(element)).toBe(root);
+    expect(flatChildren(element)).toEqual([root.querySelector("#button")]);
+    expect(flatParent(document.querySelector("#light")!)).toBe(root.querySelector("#slot"));
   });
 });

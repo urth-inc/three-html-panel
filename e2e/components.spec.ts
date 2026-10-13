@@ -17,6 +17,7 @@ const BADGE = [40, 120, 220];
 const BADGE_DOT = [250, 220, 60];
 const AFTER = [30, 160, 90];
 const LATE = [220, 40, 160];
+const CLOSED = [20, 150, 170];
 
 /** The box of the nth star (from 1), in the rating's shadow root. */
 const star = (n: number): Promise<Box> =>
@@ -44,7 +45,9 @@ test("draws shadow roots, and what follows them, where the page shows them", asy
     expect(await drawsColor(badge, BADGE, 0.9)).toBe(true);
     // Its ::before, from a rule of its shadow root.
     expect(await drawsColor({ ...badge, left: badge.left + 20, width: 10 }, BADGE_DOT)).toBe(true);
-    // As tall as the stars make the rating: not drawn higher than it is. (Clear of its label.)
+    // A closed shadow root, as the page attached it.
+    expect(await drawsColor(await panel.box("#closed"), CLOSED)).toBe(true);
+    // As tall as the row's shadow roots make it: not drawn higher than it is. (Clear of its label.)
     expect(await drawsColor(await panel.box("#after"), AFTER, 0.05)).toBe(true);
   });
 });

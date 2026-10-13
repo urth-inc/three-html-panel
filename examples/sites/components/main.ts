@@ -42,6 +42,20 @@ class Rating extends HTMLElement {
   }
 }
 customElements.define("x-rating", Rating);
+
+// A closed shadow root, taller than the rest of the row: what follows is drawn
+// where the page has it only if it is drawn.
+customElements.define(
+  "x-closed",
+  class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "closed" }).innerHTML = `
+        <style>:host { display: block; } div { width: 80px; height: 120px; background: rgb(20 150 170); }</style>
+        <div></div>`;
+    }
+  },
+);
 customElements.define("x-badge", class extends HTMLElement {});
 
 // Rated 2 to start with: only a press changes what it says.
