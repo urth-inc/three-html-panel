@@ -27,6 +27,9 @@
 // after the page's: there they win ties with the page's rules of the same
 // specificity that come later.
 //
+// That sheet also turns off iOS Safari's text autosizing, from the start (see
+// LIVE_PAGE_CSS).
+//
 // An interaction pseudo-class after a pseudo-element
 // (::-webkit-scrollbar-thumb:hover) is left alone, as css.ts does for the image.
 
@@ -252,6 +255,22 @@ function patchSelectorQueries(window: FrameWindow): () => void {
 
 /** Sibling combinators: a rule about one element restyles its later siblings (`+` in an :nth-child() too, which is only cautious). */
 const SIBLING_SELECTOR = /[~+]/;
+/**
+ * Always in the agent's sheet. iOS Safari enlarges the text of the panel
+ * iframe (text autosizing), but not in the image, which then shows the page
+ * shorter than the live page that hit testing and the caret are measured on.
+ * Laid out without the rule, the page has its text enlarged until it is laid
+ * out with it again: the sheet is there before the page's scripts run, and put
+ * back on the next sync if the page replaces the list (not at once: the page
+ * reads back the list it set, and one that keeps setting it does not fight
+ * the agent, restyling the whole document each time).
+ *
+ * On the root only: the property is inherited, and a rule on every element
+ * would be matched against all of them on each restyle.
+ */
+const LIVE_PAGE_CSS =
+  ":root{-webkit-text-size-adjust:100%!important;text-size-adjust:100%!important}";
+
 /** :has(): a rule about one element restyles any other. */
 const HAS_SELECTOR = /:has\(/;
 
@@ -267,6 +286,9 @@ export function hasTransition(style: CSSStyleDeclaration): boolean {
     style.getPropertyValue("transition-duration") || style.getPropertyValue("transition");
   return /[1-9]|var\(/.test(duration);
 }
+
+/** A document, with adoptedStyleSheets where the browser has them. */
+type AdoptingDocument = Document & { adoptedStyleSheets?: CSSStyleSheet[] };
 
 export class LiveInteractionCss {
   /**
@@ -332,6 +354,7 @@ export class LiveInteractionCss {
     this.#window = document.defaultView as FrameWindow;
     this.#unwatch = watchStylesheets(this.#window, (change) => this.#cssomChanged(change));
     this.#unpatchQueries = patchSelectorQueries(this.#window);
+    this.#adopt("");
   }
 
   /**
@@ -358,9 +381,12 @@ export class LiveInteractionCss {
    * rewrote anything (the page may lay out differently).
    */
   sync(): boolean {
-    if (!this.#stale && !this.#adoptedListChanged()) return false;
+    const adopted = this.#adoptedSheets();
+    this.#keepAdopted(adopted);
+    const pageList = this.#pageAdoptedList(adopted);
+    if (!this.#stale && !this.#adoptedListChanged(pageList)) return false;
     this.#stale = false;
-    this.#adoptedList = this.#pageAdoptedList();
+    this.#adoptedList = pageList;
     const sheets = pageStylesheets(this.#document);
     const parts = signatureParts(sheets);
     const signature = stylesheetsSignature(parts);
@@ -485,14 +511,20 @@ export class LiveInteractionCss {
     return pageStylesheets(this.#document).includes(top) ? own : null;
   }
 
-  #pageAdoptedList(): readonly CSSStyleSheet[] {
-    const adopted = (this.#document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
-      .adoptedStyleSheets;
+  /** The document's adoptedStyleSheets; undefined where there are none (jsdom). */
+  #adoptedSheets(): CSSStyleSheet[] | undefined {
+    return (this.#document as AdoptingDocument).adoptedStyleSheets;
+  }
+
+  #setAdoptedSheets(sheets: CSSStyleSheet[]): void {
+    (this.#document as AdoptingDocument).adoptedStyleSheets = sheets;
+  }
+
+  #pageAdoptedList(adopted: readonly CSSStyleSheet[] | undefined): readonly CSSStyleSheet[] {
     return adopted ? adopted.filter((sheet) => !agentSheets.has(sheet)) : [];
   }
 
-  #adoptedListChanged(): boolean {
-    const list = this.#pageAdoptedList();
+  #adoptedListChanged(list: readonly CSSStyleSheet[]): boolean {
     return (
       list.length !== this.#adoptedList.length ||
       list.some((sheet, i) => sheet !== this.#adoptedList[i])
@@ -504,7 +536,7 @@ export class LiveInteractionCss {
     this.#syncing = true;
     for (const [rule, selector] of this.#originals) rule.selectorText = selector;
     this.#originals.clear();
-    this.#adopt("");
+    this.#unadopt();
     this.#unwatch();
     this.#unpatchQueries();
     this.reset();
@@ -616,27 +648,39 @@ export class LiveInteractionCss {
     return null;
   }
 
-  #adopt(css: string): void {
-    const document = this.#document as Document & { adoptedStyleSheets?: CSSStyleSheet[] };
-    if (!document.adoptedStyleSheets) return;
+  /** Sets the agent's sheet to LIVE_PAGE_CSS and `copied` (the interaction rules of sheets the page cannot edit). */
+  #adopt(copied: string): void {
+    const adopted = this.#adoptedSheets();
+    if (!adopted) return;
+    const css = copied ? `${LIVE_PAGE_CSS}\n${copied}` : LIVE_PAGE_CSS;
     const current = this.#adopted;
-    if (!css) {
-      if (current)
-        document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
-          (sheet) => sheet !== current,
-        );
-      this.#adopted = null;
-      this.#adoptedCss = "";
-      return;
-    }
     const sheet = current ?? new this.#window.CSSStyleSheet();
     agentSheets.add(sheet);
     // Replacing a sheet's rules restyles the whole document: only when they changed.
     if (css !== this.#adoptedCss || !current) sheet.replaceSync(css);
     this.#adoptedCss = css;
     this.#adopted = sheet;
-    // The page may have replaced the list (adoptedStyleSheets = [...]) since.
-    if (!document.adoptedStyleSheets.includes(sheet))
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    this.#keepAdopted(adopted);
+  }
+
+  /** Puts the agent's sheet back in `adopted` (the document's list), if the page replaced the list (adoptedStyleSheets = [...]). */
+  #keepAdopted(adopted = this.#adoptedSheets()): void {
+    const sheet = this.#adopted;
+    if (!sheet || !adopted || adopted.includes(sheet)) return;
+    const syncing = this.#syncing;
+    this.#syncing = true;
+    try {
+      this.#setAdoptedSheets([...adopted, sheet]);
+    } finally {
+      this.#syncing = syncing;
+    }
+  }
+
+  #unadopt(): void {
+    const adopted = this.#adoptedSheets();
+    const current = this.#adopted;
+    if (current && adopted) this.#setAdoptedSheets(adopted.filter((sheet) => sheet !== current));
+    this.#adopted = null;
+    this.#adoptedCss = "";
   }
 }

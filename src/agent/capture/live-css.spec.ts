@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { pageStylesheets } from "./css";
 import { hasTransition, LiveInteractionCss } from "./live-css";
 
 let live: LiveInteractionCss | null = null;
@@ -67,6 +68,7 @@ describe("LiveInteractionCss", () => {
     Object.defineProperty(document, "adoptedStyleSheets", {
       configurable: true,
       get: () => adopted,
+      set: (sheets: CSSStyleSheet[]) => adopted.splice(0, adopted.length, ...sheets),
     });
     try {
       document.body.innerHTML = ROW;
@@ -287,6 +289,8 @@ describe("LiveInteractionCss", () => {
       // Its rules are not walked: counted as having transitions.
       expect(live.hasTransitions).toBe(true);
       const css = Array.from(adopted[0]!.cssRules, (rule) => rule.cssText).join(" ");
+      // Text autosizing stays off along with them.
+      expect(css).toContain("text-size-adjust");
       expect(css).toContain(".row:is(:hover,[data-thp-hover]) .tools");
       expect(css).not.toContain(".plain");
       // In the block it is in, whatever block that is.
@@ -312,6 +316,40 @@ describe("LiveInteractionCss", () => {
       ).toHaveLength(0);
     } finally {
       delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
+    }
+  });
+
+  it("turns off text autosizing from the start, and keeps it off if the page replaces its adopted sheets", () => {
+    const adopted: CSSStyleSheet[] = [];
+    // On the prototype, as in browsers, where the agent hears the page set it.
+    Object.defineProperty(Document.prototype, "adoptedStyleSheets", {
+      configurable: true,
+      get: () => adopted,
+      set: (sheets: CSSStyleSheet[]) => adopted.splice(0, adopted.length, ...sheets),
+    });
+    try {
+      document.body.innerHTML = ROW;
+      // Before the page is laid out: no sync needed.
+      live = new LiveInteractionCss(document);
+      expect(adopted).toHaveLength(1);
+      const agent = adopted[0]!;
+      expect(Array.from(agent.cssRules, (rule) => rule.cssText).join(" ")).toContain(
+        "text-size-adjust",
+      );
+      // Not one of the page's: left out of the image's CSS.
+      expect(pageStylesheets(document)).not.toContain(agent);
+      const own = new CSSStyleSheet();
+      own.replaceSync(".x { color: red }");
+      (document as unknown as { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets = [own];
+      // The page reads back the list it set; the agent's sheet goes back on the next sync.
+      expect(adopted).toEqual([own]);
+      live.sync();
+      expect(adopted).toEqual([own, agent]);
+      live.dispose();
+      live = null;
+      expect(adopted).toEqual([own]);
+    } finally {
+      delete (Document.prototype as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
     }
   });
 
