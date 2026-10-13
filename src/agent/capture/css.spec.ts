@@ -201,20 +201,26 @@ describe("splitStatements", () => {
 describe("parseInto and declarationsOf", () => {
   /**
    * A sheet that parses as browsers do here: each `selector{…}` a style rule,
-   * at-rules left out, and a rule with var() losing its values (lostProperties).
+   * `@media …{…}` a block of the rules in it, other at-rules left out, and a
+   * rule with var() losing its values (lostProperties).
    */
-  class FakeSheet {
-    cssRules: object[] = [];
-    replaceSync(text: string) {
-      this.cssRules = splitStatements(text)
-        .filter(({ text, open }) => open >= 0 && !text.startsWith("@"))
-        .map(({ text, open }) => {
-          const selectorText = text.slice(0, open).trim();
-          const lossy = text.includes("var(");
-          const names = lossy ? ["border-top-style"] : [];
-          return {
-            selectorText,
-            cssText: `${selectorText} { … }`,
+  function fakeRules(text: string): object[] {
+    return splitStatements(text)
+      .filter(({ open }) => open >= 0)
+      .flatMap(({ text, open }) => {
+        const prelude = text.slice(0, open).trim();
+        if (prelude.startsWith("@media")) {
+          const cssRules = fakeRules(text.slice(open + 1, text.lastIndexOf("}")));
+          const inner = cssRules.map((rule) => (rule as { cssText: string }).cssText).join(" ");
+          return [{ cssRules, cssText: `${prelude} { ${inner} }` }];
+        }
+        if (prelude.startsWith("@")) return [];
+        const lossy = text.includes("var(");
+        const names = lossy ? ["border-top-style"] : [];
+        return [
+          {
+            selectorText: prelude,
+            cssText: `${prelude} { … }`,
             cssRules: [],
             style: {
               cssText: lossy ? "border-top-style: ;" : "color: red;",
@@ -222,8 +228,14 @@ describe("parseInto and declarationsOf", () => {
               item: (index: number) => names[index],
               getPropertyValue: () => "",
             },
-          };
-        });
+          },
+        ];
+      });
+  }
+  class FakeSheet {
+    cssRules: object[] = [];
+    replaceSync(text: string) {
+      this.cssRules = fakeRules(text);
     }
   }
   const parse = (css: string) => {
@@ -236,6 +248,17 @@ describe("parseInto and declarationsOf", () => {
     const [lossy, plain] = parse(
       `@import "x.css"; .a { border: 1px solid var(--a); border-top-color: red } .b{color:red}`,
     );
+    expect(declarationsOf(lossy!)).toBe(" border: 1px solid var(--a); border-top-color: red ");
+    expect(declarationsOf(plain!)).toBe("color: red;");
+  });
+
+  it("keeps those in blocks of rules too, where hover rules often are", () => {
+    const [media] = parse(
+      `@media (hover: hover) { .b:hover{color:red} .a:hover { border: 1px solid var(--a); border-top-color: red } }`,
+    );
+    const [plain, lossy] = Array.from(
+      (media as unknown as CSSMediaRule).cssRules,
+    ) as CSSStyleRule[];
     expect(declarationsOf(lossy!)).toBe(" border: 1px solid var(--a); border-top-color: red ");
     expect(declarationsOf(plain!)).toBe("color: red;");
   });

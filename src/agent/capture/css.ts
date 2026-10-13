@@ -278,33 +278,50 @@ const isStyleRule = (rule: CSSRule | undefined): rule is CSSStyleRule =>
 
 /**
  * Parses CSS text into `sheet` (replaceSync, which leaves out @import), and
- * keeps the blocks of its top-level style rules as written (see
- * writtenBlockOf). Only those with var() in them can lose values. Each is
- * found by parsing its statement alone: the rule it makes is the sheet's
- * with the same text, so a statement split apart differently from the
- * browser's parser (after a stray token) matches no rule and is left out.
+ * keeps the blocks of its style rules as written (see writtenBlockOf): those
+ * at the top level and those in blocks of rules (@media, @supports, @layer…,
+ * where hover rules often are). Only those with var() in them can lose
+ * values. Each is found by parsing its statement alone: the rule it makes is
+ * the sheet's with the same text, so a statement split apart differently from
+ * the browser's parser (after a stray token) matches no rule and is left out.
  */
 export function parseInto(sheet: CSSStyleSheet, text: string): void {
   sheet.replaceSync(text);
-  const written = new Map<string, string[]>();
-  let scratch: CSSStyleSheet | null = null;
+  const scratch = new (sheet.constructor as typeof CSSStyleSheet)();
+  keepWrittenBlocks(sheet.cssRules, text, scratch);
+}
+
+/** Keeps the written blocks of `rules` (the parse of `text`) and of the blocks of rules in them. */
+function keepWrittenBlocks(rules: CSSRuleList, text: string, scratch: CSSStyleSheet): void {
+  // By the text of the rule each statement makes: its block (a style rule's),
+  // or the text inside it (a block of rules', looked into in turn).
+  const styleBlocks = new Map<string, string[]>();
+  const innerTexts = new Map<string, string[]>();
+  const add = (map: Map<string, string[]>, key: string, value: string) => {
+    const values = map.get(key);
+    if (values) values.push(value);
+    else map.set(key, [value]);
+  };
   for (const { text: statement, open } of splitStatements(text)) {
     if (open < 0 || !statement.includes("var(")) continue;
-    scratch ??= new (sheet.constructor as typeof CSSStyleSheet)();
     scratch.replaceSync(statement);
     const rule = scratch.cssRules[0];
-    if (scratch.cssRules.length !== 1 || !isStyleRule(rule)) continue;
+    if (scratch.cssRules.length !== 1 || !rule) continue;
     const close = statement.lastIndexOf("}");
     const block = statement.slice(open + 1, close > open ? close : undefined);
-    const blocks = written.get(rule.cssText);
-    if (blocks) blocks.push(block);
-    else written.set(rule.cssText, [block]);
+    if (isStyleRule(rule)) add(styleBlocks, rule.cssText, block);
+    else if ("cssRules" in rule) add(innerTexts, rule.cssText, block);
   }
-  if (written.size === 0) return;
-  for (const rule of Array.from(sheet.cssRules)) {
-    if (!isStyleRule(rule)) continue;
-    const block = written.get(rule.cssText)?.shift();
-    if (block !== undefined) sourceBlocks.set(rule, block);
+  if (styleBlocks.size === 0 && innerTexts.size === 0) return;
+  for (const rule of Array.from(rules)) {
+    if (isStyleRule(rule)) {
+      const block = styleBlocks.get(rule.cssText)?.shift();
+      if (block !== undefined) sourceBlocks.set(rule, block);
+    } else if ("cssRules" in rule) {
+      const inner = innerTexts.get(rule.cssText)?.shift();
+      if (inner !== undefined)
+        keepWrittenBlocks((rule as CSSGroupingRule).cssRules, inner, scratch);
+    }
   }
 }
 
