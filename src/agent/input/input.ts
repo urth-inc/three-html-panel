@@ -34,6 +34,14 @@ import {
   type Composition,
   type TextField,
 } from "./caret";
+import {
+  closestInFlatTree,
+  deepElementFromPoint,
+  flatParent,
+  querySelectorAllInFlatTree,
+  retarget,
+  shadowRootOf,
+} from "../flat-tree";
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
@@ -137,15 +145,56 @@ function scrollByUser(element: Element, left: number, top: number): void {
   element.scrollBy({ left, top, behavior: "instant" });
 }
 
+/**
+ * Focusable elements (in the order drawn) in tab order, as browsers have it:
+ * in each tree on its own, a positive tabindex first (by its value), then the
+ * others in their order. A shadow root's take its host's place in its tree
+ * (right after the host, if it takes focus itself), at the host's tabindex.
+ */
+function tabOrderOf(document: Document, elements: HTMLElement[]): HTMLElement[] {
+  const focusable = new Set<Element>(elements);
+  // Each tree's entries, in the order drawn: its elements, and the hosts of the trees in it.
+  const entries = new Map<Node, Set<Element>>();
+  for (const element of elements) {
+    for (let node: Element = element; ;) {
+      const tree = node.getRootNode();
+      let inTree = entries.get(tree);
+      if (!inTree) entries.set(tree, (inTree = new Set()));
+      if (inTree.has(node)) break;
+      inTree.add(node);
+      if (tree.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) break;
+      node = (tree as ShadowRoot).host;
+    }
+  }
+  const tabIndex = (entry: Element) =>
+    focusable.has(entry) || entry.hasAttribute("tabindex")
+      ? Math.max(0, (entry as HTMLElement).tabIndex)
+      : 0;
+  const order = (tree: Node): HTMLElement[] => {
+    const inTree = Array.from(entries.get(tree) ?? []);
+    const positive = inTree.filter((entry) => tabIndex(entry) > 0);
+    positive.sort((a, b) => tabIndex(a) - tabIndex(b));
+    return [...positive, ...inTree.filter((entry) => tabIndex(entry) === 0)].flatMap((entry) => {
+      const root = shadowRootOf(entry);
+      return [
+        ...(focusable.has(entry) ? [entry as HTMLElement] : []),
+        ...(root ? order(root) : []),
+      ];
+    });
+  };
+  return order(document);
+}
+
+/** An element and its ancestors, in the flat tree (a press in a shadow root is in its host too). */
 function ancestors(element: Element | null): Element[] {
   const chain: Element[] = [];
-  for (let node = element; node; node = node.parentElement) chain.push(node);
+  for (let node = element; node; node = flatParent(node)) chain.push(node);
   return chain;
 }
 
 function commonAncestor(a: Element, b: Element): Element | null {
   const chain = new Set(ancestors(a));
-  for (let node: Element | null = b; node; node = node.parentElement)
+  for (let node: Element | null = b; node; node = flatParent(node))
     if (chain.has(node)) return node;
   return null;
 }
@@ -196,9 +245,18 @@ export class VirtualFocus {
     // The agent should run before the page's scripts. If it was loaded later,
     // something may have been focused for real already: take it over.
     const realActive = document.activeElement;
+    // As the browser's: the host of a shadow root the focus is in, outside it.
     Object.defineProperty(document, "activeElement", {
       configurable: true,
-      get: () => this.current ?? document.body,
+      get: () => (this.current && retarget(this.current, document)) ?? document.body,
+    });
+    const current = () => this.current;
+    Object.defineProperty(this.#window.ShadowRoot.prototype, "activeElement", {
+      configurable: true,
+      get(this: ShadowRoot) {
+        const focused = current();
+        return focused && retarget(focused, this);
+      },
     });
     if (realActive instanceof this.#window.HTMLElement && realActive !== document.body) {
       this.#element = realActive;
@@ -242,7 +300,8 @@ export class VirtualFocus {
     this.#onMove();
     const { FocusEvent } = this.#window;
     if (previous) {
-      previous.dispatchEvent(new FocusEvent("blur", { relatedTarget: element }));
+      // Composed, as the browser's: a host hears of focus moving in its shadow root.
+      previous.dispatchEvent(new FocusEvent("blur", { composed: true, relatedTarget: element }));
       previous.dispatchEvent(
         new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: element }),
       );
@@ -255,7 +314,7 @@ export class VirtualFocus {
         if (selection && !(selection.rangeCount > 0 && element.contains(selection.anchorNode)))
           selection.collapse(element, 0);
       }
-      element.dispatchEvent(new FocusEvent("focus", { relatedTarget: previous }));
+      element.dispatchEvent(new FocusEvent("focus", { composed: true, relatedTarget: previous }));
       element.dispatchEvent(
         new FocusEvent("focusin", { bubbles: true, composed: true, relatedTarget: previous }),
       );
@@ -634,7 +693,7 @@ export class InputSynthesizer {
     if (isTextField(target) || editable) return "text";
     // WebKit leaves links at "auto" and picks the hand cursor natively, where
     // Chromium and Firefox compute "pointer": the hand is picked here the same way.
-    if (target.closest(":any-link")) return "pointer";
+    if (closestInFlatTree(target, ":any-link")) return "pointer";
     return this.#pointer && this.#isOverText(this.#pointer.x, this.#pointer.y) ? "text" : "default";
   }
 
@@ -768,7 +827,10 @@ export class InputSynthesizer {
     const host = editingHostOf(target);
     // Pressing a <label> focuses its control.
     const focusable =
-      host ?? target.closest(FOCUSABLE_SELECTOR) ?? target.closest("label")?.control ?? null;
+      host ??
+      closestInFlatTree(target, FOCUSABLE_SELECTOR) ??
+      (closestInFlatTree(target, "label") as HTMLLabelElement | null)?.control ??
+      null;
     if (focusable && this.#focus.isFocusable(focusable)) {
       const wasFocused = this.#focus.current === focusable;
       this.#focus.set(focusable);
@@ -899,8 +961,9 @@ export class InputSynthesizer {
 
   // --- Pointer ---------------------------------------------------------------
 
+  /** What is drawn at a point: inside a shadow root, not its host (which is all elementFromPoint() sees). */
   #hitTest(x: number, y: number): Element {
-    return this.#document.elementFromPoint(x, y) ?? this.#document.documentElement;
+    return deepElementFromPoint(this.#document, x, y) ?? this.#document.documentElement;
   }
 
   #pointerInit(
@@ -1690,7 +1753,8 @@ export class InputSynthesizer {
 
   #radioGroup(radio: HTMLInputElement): HTMLInputElement[] {
     if (!radio.name) return [radio];
-    const scope = radio.form ?? radio.ownerDocument;
+    // In its form, or in its tree (a shadow root's radios are a group of their own).
+    const scope = radio.form ?? (radio.getRootNode() as Document | ShadowRoot);
     return Array.from(scope.querySelectorAll<HTMLInputElement>("input[type=radio]")).filter(
       (other) => other.name === radio.name && other.form === radio.form,
     );
@@ -1718,34 +1782,33 @@ export class InputSynthesizer {
 
   #tabOrder(): Element[] {
     const { HTMLElement, HTMLInputElement } = this.#window;
-    const candidates = Array.from(this.#document.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
-      (element) => {
-        if (
-          !(element instanceof HTMLElement) ||
-          element.tabIndex < 0 ||
-          !this.#focus.isFocusable(element)
-        )
-          return false;
-        if (element.closest("[inert]")) return false;
-        // jsdom has no checkVisibility; there, everything counts as shown.
-        if (
-          typeof element.checkVisibility === "function" &&
-          !element.checkVisibility({ visibilityProperty: true })
-        ) {
-          return false;
-        }
-        if (element instanceof HTMLInputElement && element.type === "radio") {
-          // One stop per group: the checked radio, or else the first one.
-          const group = this.#radioGroup(element);
-          return element === (group.find((radio) => radio.checked) ?? group[0]);
-        }
-        return true;
-      },
-    ) as HTMLElement[];
-    const positive = candidates
-      .filter((element) => element.tabIndex > 0)
-      .sort((a, b) => a.tabIndex - b.tabIndex);
-    return [...positive, ...candidates.filter((element) => element.tabIndex === 0)];
+    // In shadow roots too (a press can focus what is in one), in the order drawn.
+    const candidates = querySelectorAllInFlatTree(
+      this.#document.documentElement,
+      FOCUSABLE_SELECTOR,
+    ).filter((element) => {
+      if (
+        !(element instanceof HTMLElement) ||
+        element.tabIndex < 0 ||
+        !this.#focus.isFocusable(element)
+      )
+        return false;
+      if (closestInFlatTree(element, "[inert]")) return false;
+      // jsdom has no checkVisibility; there, everything counts as shown.
+      if (
+        typeof element.checkVisibility === "function" &&
+        !element.checkVisibility({ visibilityProperty: true })
+      ) {
+        return false;
+      }
+      if (element instanceof HTMLInputElement && element.type === "radio") {
+        // One stop per group: the checked radio, or else the first one.
+        const group = this.#radioGroup(element);
+        return element === (group.find((radio) => radio.checked) ?? group[0]);
+      }
+      return true;
+    }) as HTMLElement[];
+    return tabOrderOf(this.#document, candidates);
   }
 
   #stateOf(field: TextField): FieldState {

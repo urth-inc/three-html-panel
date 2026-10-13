@@ -43,7 +43,9 @@ import {
   snapshotDocument,
   type ListBoxRow,
   type LostMatches,
+  type ShadowStyles,
 } from "./snapshot";
+import { rememberShadowRoot } from "../flat-tree";
 
 /** Events after which a form control's state (:checked, :valid…) may have changed, with no attribute. */
 const STATE_EVENTS = ["input", "change"];
@@ -75,6 +77,14 @@ const INVALIDATING_EVENTS = [
   "ended",
 ];
 
+/** What the page's observer watches, in the document and in each shadow root. */
+const MUTATIONS: MutationObserverInit = {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+};
+
 export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void;
   /**
@@ -105,6 +115,14 @@ export class PageCapture {
   readonly #images: ImageInliner;
   readonly #input: InputSynthesizer;
   readonly #mutations: MutationObserver;
+  /** The shadow roots #mutations watches too (see #watchShadowRoot). */
+  readonly #shadowRoots = new WeakSet<ShadowRoot>();
+  /** Puts the page's attachShadow back (see #watchShadowRoot). */
+  readonly #restoreAttachShadow: () => void;
+  /** The shadow roots the last snapshot drew: their animations are not the document's (see hasShadowAnimations). */
+  #drawnShadowRoots: ShadowRoot[] = [];
+  /** The styles of what is drawn in shadow trees, kept while the page and its layout stay (see ShadowStyles). */
+  readonly #shadowStyles: ShadowStyles = { version: "", computed: new WeakMap() };
   readonly #pacer = new RenderPacer();
   #dirty = true;
   #timer = 0;
@@ -215,12 +233,30 @@ export class PageCapture {
     // A transition ran (one in an inline style, say): the page has some.
     this.#window.addEventListener("transitionrun", this.#transitionRan, true);
 
-    this.#mutations.observe(document, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      characterData: true,
-    });
+    this.#mutations.observe(document, MUTATIONS);
+    // A shadow root attached later (a custom element defined after the page
+    // loaded, say) changes no node the observer sees, nor does what goes in it.
+    const proto = this.#window.Element.prototype;
+    // oxlint-disable-next-line typescript/unbound-method -- called with .call on an element
+    const attachShadow = proto.attachShadow;
+    const attached = (root: ShadowRoot) => {
+      // Still wrapped after dispose() if the page wrapped it again since.
+      if (this.#disposed) return;
+      // A closed one, too: the flat tree is drawn through it.
+      rememberShadowRoot(root);
+      this.#watchShadowRoot(root);
+      this.#changed();
+    };
+    // The page's elements call it with themselves as `this`: no arrow function.
+    const watched = function (this: Element, init: ShadowRootInit): ShadowRoot {
+      const root = attachShadow.call(this, init);
+      attached(root);
+      return root;
+    };
+    proto.attachShadow = watched;
+    this.#restoreAttachShadow = () => {
+      if (proto.attachShadow === watched) proto.attachShadow = attachShadow;
+    };
     for (const type of INVALIDATING_EVENTS)
       this.#window.addEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS) this.#window.addEventListener(type, this.#stateChanged, true);
@@ -291,6 +327,7 @@ export class PageCapture {
     this.#input.dispose();
     this.#liveCss.dispose();
     this.#mutations.disconnect();
+    this.#restoreAttachShadow();
     for (const type of INVALIDATING_EVENTS)
       this.#window.removeEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS)
@@ -427,6 +464,8 @@ export class PageCapture {
         : undefined;
     // Collected first: the snapshot takes what the CSSOM lost of it from the page (DocumentCss.lost).
     const sheets = this.#css.get();
+    this.#shadowStyles.version = `${this.#layoutVersion}:${this.#matchVersion}`;
+    const drawnShadowRoots: ShadowRoot[] = [];
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
     const xhtml = this.#measure(() =>
       snapshotDocument(this.#document, {
@@ -447,13 +486,27 @@ export class PageCapture {
         openedAt: (element) => this.#openOrder.at(element),
         inlineImage: (url) => this.#images.get(url),
         lost: this.#lostElements(),
+        // One declared in the HTML, or attached before the agent ran.
+        shadowRoot: (root) => {
+          this.#watchShadowRoot(root);
+          drawnShadowRoots.push(root);
+        },
+        shadowStyles: this.#shadowStyles,
       }),
     );
+    this.#drawnShadowRoots = drawnShadowRoots;
     const svg = buildFrameSvg(xhtml, sheets, width, height);
     if (svg !== this.#lastSvg) {
       this.#lastSvg = svg;
       this.#options.onFrame({ svg, width, height });
     }
+  }
+
+  /** Watches a shadow root for changes as the page's document is: the document's observer does not see into it. */
+  #watchShadowRoot(root: ShadowRoot): void {
+    if (this.#disposed || this.#shadowRoots.has(root)) return;
+    this.#shadowRoots.add(root);
+    this.#mutations.observe(root, MUTATIONS);
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */
@@ -513,7 +566,22 @@ export class PageCapture {
 
   /** Whether anything on the page moves by itself: an animation, a video, an indeterminate <progress> in view (see snapshot.ts). */
   #isMoving(): boolean {
-    return this.#hasLiveAnimations() || this.#hasPlayingVideo() || this.#hasIndeterminateInView();
+    return (
+      this.#hasLiveAnimations() ||
+      this.#hasShadowAnimations() ||
+      this.#hasPlayingVideo() ||
+      this.#hasIndeterminateInView()
+    );
+  }
+
+  /** What is drawn in a shadow tree is copied as computed: any animation running there changes it. */
+  #hasShadowAnimations(): boolean {
+    return this.#drawnShadowRoots.some(
+      (root) =>
+        // jsdom has none.
+        typeof root.getAnimations === "function" &&
+        root.getAnimations().some((animation) => animation.playState === "running"),
+    );
   }
 
   #hasIndeterminateInView(): boolean {

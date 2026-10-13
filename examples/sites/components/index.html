@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Web components</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>Web components</h1>
+    <p>Elements with shadow roots of their own, and what follows them.</p>
+    <div class="row">
+      <x-rating id="rating" value="2"><span class="label">Rate this page</span></x-rating>
+      <x-badge id="badge">
+        <template shadowrootmode="open">
+          <style>
+            :host {
+              display: inline-block;
+              padding: 12px 20px;
+              background: rgb(40 120 220);
+              color: white;
+            }
+            :host::before {
+              content: "";
+              display: inline-block;
+              width: 10px;
+              height: 10px;
+              margin-right: 6px;
+              background: rgb(250 220 60);
+            }
+          </style>
+          <slot></slot>
+        </template>
+        Declared
+      </x-badge>
+      <x-closed id="closed">Not drawn: assigned to no slot</x-closed>
+    </div>
+    <button type="button" id="after">After the components</button>
+    <p id="result">Not rated. Pressed 0 times.</p>
+    <x-late id="late"></x-late>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

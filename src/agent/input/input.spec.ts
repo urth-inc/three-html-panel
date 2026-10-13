@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { rememberShadowRoot } from "../flat-tree";
 import { InputSynthesizer } from "./input";
 
 let input: InputSynthesizer;
@@ -73,6 +74,33 @@ describe("virtual focus", () => {
     field.focus();
     document.querySelector<HTMLElement>("#plain")!.focus();
     expect(input.focused).toBe(field);
+  });
+
+  it("shows focus in a shadow root as browsers do: as its host, outside it", () => {
+    document.body.insertAdjacentHTML("beforeend", `<x-host id="host"></x-host>`);
+    const host = document.querySelector("#host")!;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="inner">Inner</button>`;
+    const inner = root.querySelector<HTMLElement>("#inner")!;
+    inner.focus();
+    expect(input.focused).toBe(inner);
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(inner);
+    document.querySelector<HTMLElement>("#name")!.focus();
+    expect(root.activeElement).toBeNull();
+  });
+
+  it("tells the host of focus moving in its shadow root, as the browser's composed events do", () => {
+    document.body.insertAdjacentHTML("beforeend", `<x-host id="host"></x-host>`);
+    const host = document.querySelector("#host")!;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="inner">Inner</button>`;
+    const events: string[] = [];
+    host.addEventListener("focus", () => events.push("focus"));
+    host.addEventListener("blur", () => events.push("blur"));
+    root.querySelector<HTMLElement>("#inner")!.focus();
+    document.querySelector<HTMLElement>("#name")!.focus();
+    expect(events).toEqual(["focus", "blur"]);
   });
 
   it("loses focus when the element is removed", () => {
@@ -317,6 +345,52 @@ describe("text editing", () => {
     expect(input.focused).toBe(byId("first"));
     tab(true);
     expect(input.focused).toBe(byId("r2"));
+  });
+
+  it("moves with Tab into a shadow root and on, in the order drawn", () => {
+    document.body.innerHTML = `<button id="before">Before</button><x-host id="host"></x-host><button id="after">After</button>`;
+    const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="one">One</button><button id="two">Two</button>`;
+    // As the page's attachShadow tells the agent.
+    rememberShadowRoot(root);
+    const tab = () =>
+      input.handle({
+        type: "key",
+        key: "Tab",
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+      });
+    root.querySelector<HTMLElement>("#one")!.focus();
+    tab();
+    expect(input.focused).toBe(root.querySelector("#two"));
+    tab();
+    expect(input.focused).toBe(document.getElementById("after"));
+  });
+
+  it("orders each shadow root on its own, at its host's place, and stops at its radios", () => {
+    document.body.innerHTML = `<button id="first" tabindex="2">First</button><button id="plain">Plain</button><x-host id="host"></x-host>`;
+    const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<button id="inner">Inner</button><button id="early" tabindex="1">Early</button>
+      <input type="radio" name="size" id="small"><input type="radio" name="size" id="large" checked>`;
+    rememberShadowRoot(root);
+    const tab = () =>
+      input.handle({
+        type: "key",
+        key: "Tab",
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+      });
+    const order: string[] = [];
+    for (let step = 0; step < 5; step++) {
+      tab();
+      order.push(input.focused!.id);
+    }
+    // A tabindex of 1 in the shadow root comes first there, not before the page's 2.
+    expect(order).toEqual(["first", "plain", "early", "inner", "large"]);
   });
 
   it("toggles checkboxes with Space, and moves through a radio group with the arrows", () => {

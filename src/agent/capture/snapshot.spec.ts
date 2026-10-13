@@ -196,6 +196,66 @@ describe("indeterminate <progress>", () => {
   });
 });
 
+describe("shadow roots", () => {
+  it("copies a host as drawn: its shadow root, a slot's children in it, and nothing unassigned", () => {
+    document.body.innerHTML = `<x-card id="host"><span id="light">Label</span><i id="unassigned" slot="none"></i></x-card><p id="after"></p>`;
+    const host = document.querySelector("#host")!;
+    host.attachShadow({
+      mode: "open",
+    }).innerHTML = `<style>div { display: block }</style><div id="inner"><slot id="slot"></slot></div>`;
+    document.getAnimations = () => [];
+    const xhtml = snapshotDocument(document, { inlineImage: () => null });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    expect(copy.querySelector("#host > #inner > #slot > #light")).not.toBeNull();
+    expect(copy.getElementById("unassigned")).toBeNull();
+    expect(copy.querySelector("#host style")).toBeNull();
+    // As computed, over whatever the page's rules would give it now.
+    const inner = copy.getElementById("inner") as HTMLElement;
+    expect(inner.style.getPropertyValue("display")).toBe("block");
+    expect(inner.style.getPropertyPriority("display")).toBe("important");
+    expect(xhtml).toContain("[data-thp-shadow]{all:initial!important}");
+    for (const id of ["host", "inner", "slot", "light"])
+      expect(copy.getElementById(id)!.hasAttribute("data-thp-shadow")).toBe(true);
+    expect(copy.getElementById("after")!.hasAttribute("data-thp-shadow")).toBe(false);
+  });
+
+  it("replaces the style of what is drawn in one with the computed values: its var()s would find nothing", () => {
+    document.body.innerHTML = `<x-card id="host"></x-card>`;
+    const host = document.querySelector("#host")!;
+    host.attachShadow({
+      mode: "open",
+    }).innerHTML = `<div id="inner" style="--accent: red; color: var(--accent) !important"></div>`;
+    document.getAnimations = () => [];
+    const roots: ShadowRoot[] = [];
+    const xhtml = snapshotDocument(document, {
+      inlineImage: () => null,
+      shadowRoot: (root) => roots.push(root),
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    // (jsdom computes no var(), as browsers do.)
+    expect(copy.getElementById("inner")!.getAttribute("style")).not.toMatch(/--accent\s*:/);
+    expect(roots).toEqual([host.shadowRoot]);
+  });
+
+  it("computes the styles again only when their version changes", () => {
+    document.body.innerHTML = `<x-card id="host"></x-card>`;
+    const root = document.querySelector("#host")!.attachShadow({ mode: "open" });
+    root.innerHTML = `<div id="inner"></div>`;
+    document.getAnimations = () => [];
+    const shadowStyles = { version: "1", computed: new WeakMap() };
+    const display = () => {
+      const xhtml = snapshotDocument(document, { inlineImage: () => null, shadowStyles });
+      const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+      return (copy.getElementById("inner") as HTMLElement).style.getPropertyValue("display");
+    };
+    expect(display()).toBe("block");
+    root.querySelector<HTMLElement>("#inner")!.style.display = "flex";
+    expect(display()).toBe("block");
+    shadowStyles.version = "2";
+    expect(display()).toBe("flex");
+  });
+});
+
 describe("text being composed", () => {
   it("shows in the copy, not in the page, and is underlined", () => {
     document.body.innerHTML = `<input id="name" value="ab">`;

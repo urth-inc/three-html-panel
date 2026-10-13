@@ -1,0 +1,35 @@
+body {
+  margin: 0;
+  padding: 16px;
+  font:
+    16px/1.4 system-ui,
+    sans-serif;
+  background: white;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+/* The page's rules match neither a shadow root's elements nor a host's children where they are drawn. */
+button {
+  background: rgb(200 0 0);
+  padding: 30px;
+}
+
+x-rating > .label {
+  color: rgb(120 40 160);
+}
+
+#after {
+  display: block;
+  width: 240px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  background: rgb(30 160 90);
+  color: white;
+}
