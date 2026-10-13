@@ -57,9 +57,13 @@
     <p class="status" id="status">Words: 0</p>
     <section class="media">
       <video id="video" muted loop playsinline></video>
+      <picture id="picture">
+        <source type="image/png" srcset="./picture@2x.png 2x" />
+        <img src="./picture-fallback.png" alt="An orange tile" />
+      </picture>
       <div class="media-controls">
         <button id="play" type="button">Play</button>
-        <span class="note">A video, drawn frame by frame.</span>
+        <span class="note">A video, drawn frame by frame, and a picture.</span>
       </div>
     </section>
     <script type="module" src="./main.ts"></script>

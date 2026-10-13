@@ -197,6 +197,83 @@ describe("what the browser draws outside the page", () => {
     expect(copy.getElementById("other")!.hasAttribute("src")).toBe(false);
   });
 
+  it("shows the source a <picture> picked as the image's data URL, not the sources it cannot load", () => {
+    document.body.innerHTML = `<picture id="art">
+      <source type="image/avif" srcset="dusk-480.avif 480w" sizes="50vw" />
+      <img id="dusk" src="dusk-480.jpg" srcset="dusk-480.jpg 480w" sizes="50vw" alt="" />
+    </picture>`;
+    const avifUrl = new URL("dusk-480.avif", document.baseURI).href;
+    Object.defineProperty(document.querySelector("#dusk"), "currentSrc", { value: avifUrl });
+    const copy = snapshot({
+      inlineImage: (url) => (url === avifUrl ? "data:image/avif;base64,DUSK" : null),
+    });
+    const image = copy.getElementById("dusk")!;
+    expect(image.getAttribute("src")).toBe("data:image/avif;base64,DUSK");
+    expect(image.hasAttribute("srcset")).toBe(false);
+    expect(image.hasAttribute("sizes")).toBe(false);
+    // Kept, for the page's selectors, but without anything to pick.
+    const source = copy.querySelector("#art source")!;
+    expect(source.getAttribute("type")).toBe("image/avif");
+    expect(source.hasAttribute("srcset")).toBe(false);
+    expect(source.hasAttribute("sizes")).toBe(false);
+  });
+
+  it("shows a <picture>'s fallback until it picked a source (a lazy image below the host's viewport may never)", () => {
+    document.body.innerHTML = `<picture id="art">
+      <source type="image/avif" srcset="dusk-480.avif" />
+      <img id="dusk" src="dusk-480.jpg" loading="lazy" alt="" />
+    </picture>`;
+    const fallbackUrl = new URL("dusk-480.jpg", document.baseURI).href;
+    const copy = snapshot({
+      inlineImage: (url) => (url === fallbackUrl ? "data:image/jpeg;base64,FALLBACK" : null),
+    });
+    const image = copy.getElementById("dusk")!;
+    expect(image.getAttribute("src")).toBe("data:image/jpeg;base64,FALLBACK");
+    expect(image.hasAttribute("loading")).toBe(false);
+    expect(copy.querySelector("#art source")!.hasAttribute("srcset")).toBe(false);
+  });
+
+  it("does not fetch a fallback that would stand in for a candidate in no box (an image the page has not sized)", () => {
+    // What an unsized image has before it loads: no box.
+    document.body.innerHTML = `<style>img { width: 0px; height: 0px }</style>
+      <picture><source srcset="dusk.avif" /><img id="dusk" src="dusk.jpg" loading="lazy" alt="" /></picture>`;
+    const inlineImage = vi.fn(() => "data:image/jpeg;base64,FALLBACK");
+    const copy = snapshot({ inlineImage });
+    expect(inlineImage).not.toHaveBeenCalled();
+    expect(copy.getElementById("dusk")!.hasAttribute("src")).toBe(false);
+  });
+
+  it("fits a fallback that stands in for a candidate not picked yet in its box, not stretched", () => {
+    document.body.innerHTML = `<style>img { width: 120px; height: 200px; object-fit: fill }
+        #cover { object-fit: cover }</style>
+      <picture><source media="(max-width: 600px)" srcset="portrait.jpg" />
+        <img id="waiting" src="landscape.jpg" loading="lazy" alt="" /></picture>
+      <picture><img id="picked" src="landscape.jpg" alt="" /></picture>
+      <picture><img id="cover" src="landscape.jpg" alt="" /></picture>`;
+    const picked = document.querySelector("#picked")!;
+    Object.defineProperty(picked, "currentSrc", { value: "https://example.com/landscape.jpg" });
+    const copy = snapshot();
+    const fit = (id: string) => (copy.getElementById(id) as HTMLElement).style.objectFit;
+    expect(fit("waiting")).toBe("contain");
+    // Picked: drawn as the page draws it. The page's own fit is kept.
+    expect(fit("picked")).toBe("");
+    expect(fit("cover")).toBe("");
+  });
+
+  // At the size the page lays it out at, not its pixels (2x, or its width over
+  // sizes): what that size is takes layout, which jsdom has not (see e2e/reader.spec.ts).
+  it("pins the size of an image drawn from a candidate", () => {
+    document.body.innerHTML = `<style>#dusk { width: 240px; height: 150px }</style>
+      <img id="dusk" src="dusk-480.jpg" srcset="dusk-480.jpg 2x" alt="" />
+      <img id="plain" src="plain.jpg" alt="" />`;
+    const copy = snapshot();
+    const image = copy.getElementById("dusk") as HTMLElement;
+    expect(image.style.getPropertyValue("width")).toBe("240px");
+    expect(image.style.getPropertyValue("height")).toBe("150px");
+    // An image without candidates is drawn at its own size, as on the page.
+    expect(copy.getElementById("plain")!.hasAttribute("style")).toBe(false);
+  });
+
   it("encodes a video's frame again only when it changed (a paused video is not encoded on every frame)", () => {
     document.body.innerHTML = `<video id="clip"></video>`;
     const video = document.querySelector<HTMLVideoElement>("#clip")!;
