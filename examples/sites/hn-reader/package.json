@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@mdi/js": "7.4.47",
-    "@urth/three-html-panel": "0.2.4",
+    "@urth/three-html-panel": "0.2.5",
     "vue": "3.5.43",
     "vuetify": "4.2.4"
   },
