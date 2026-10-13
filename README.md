@@ -1,5 +1,10 @@
 # three-html-panel
 
+[![npm](https://img.shields.io/npm/v/@urth/three-html-panel)](https://www.npmjs.com/package/@urth/three-html-panel)
+[![CI](https://github.com/urth-inc/three-html-panel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/urth-inc/three-html-panel/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/@urth/three-html-panel)](LICENSE)
+[![bundle size](https://deno.bundlejs.com/badge?q=@urth/three-html-panel&config=%7B%22esbuild%22%3A%7B%22external%22%3A%5B%22three%22%5D%7D%7D)](https://bundlejs.com/?q=@urth/three-html-panel&config=%7B%22esbuild%22%3A%7B%22external%22%3A%5B%22three%22%5D%7D%7D)
+
 Show existing web pages — scripts included, from any origin — as interactive panels in a three.js scene.
 
 - Mouse, touch and VR controllers: hover, click, drag, wheel and touch scrolling
@@ -25,6 +30,8 @@ npm install @urth/three-html-panel three
 ```
 
 three r158 or later (with `@types/three` 0.158 or later for TypeScript).
+
+The agent adds about 35 kB (gzip) to each panel page.
 
 ## Usage
 
