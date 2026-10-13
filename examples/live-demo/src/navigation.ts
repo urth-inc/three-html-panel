@@ -1,12 +1,13 @@
 // Moving around the scene: WASD (or the arrow keys) and an on-screen stick in
 // the bottom left, in either of two views. Orbit turns around the panel shown
 // (OrbitControls: drag to turn around it, wheel or pinch to zoom, right drag to
-// pan): W and S come closer to it and go back, A and D move to the side, and
-// what it turns around with them. First person turns the camera itself (drag
-// toward where to look): WASD walk along the ground, where the camera faces,
-// and the wheel or a pinch walks forward and back. Drags and the wheel over a
-// panel go to the panel (PanelPointer takes them first), and keys go to a
-// panel while one of its text fields has focus.
+// pan): W and S come closer to it and go back, along the line the camera
+// looks along, A and D move to the side, and what it turns around with them.
+// First person turns the camera itself (drag toward where to look), and a
+// right drag moves it up, down and to the side: WASD move where the camera
+// looks (looking up, W goes up), and the wheel or a pinch moves forward and
+// back. Drags and the wheel over a panel go to the panel (PanelPointer takes
+// them first), and keys go to a panel while one of its text fields has focus.
 
 import { type PerspectiveCamera, Vector2, Vector3 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -20,6 +21,8 @@ const LOOK_SPEED = 0.004;
 const MAX_PITCH = (85 * Math.PI) / 180;
 /** Metres walked per CSS pixel two fingers spread apart, in first person. */
 const PINCH_SPEED = 0.005;
+/** Metres moved per CSS pixel dragged with the right button, in first person. */
+const PAN_SPEED = 0.004;
 /** How close orbiting comes to the panel it turns around. */
 const MIN_ORBIT_DISTANCE = 0.5;
 
@@ -48,7 +51,8 @@ export class Navigation {
   readonly #center = new Vector3();
   #yaw = 0;
   #pitch = 0;
-  #look: { id: number; x: number; y: number } | null = null;
+  /** First person: the drag under way, to look around or (right button) to move. */
+  #look: { id: number; x: number; y: number; pan: boolean } | null = null;
   /** First person: the touches down outside the panels; two pinch. */
   readonly #touches = new Map<number, { x: number; y: number }>();
   readonly #listeners = new Set<(mode: ViewMode) => void>();
@@ -72,6 +76,10 @@ export class Navigation {
     element.addEventListener("pointerup", this.#onPointerUp);
     element.addEventListener("pointercancel", this.#onPointerUp);
     element.addEventListener("wheel", this.#onWheel, { passive: false });
+    // First person: the right button drags, not opens a menu (OrbitControls does so when orbiting).
+    element.addEventListener("contextmenu", (event) => {
+      if (this.#mode === "first-person") event.preventDefault();
+    });
   }
 
   get mode(): ViewMode {
@@ -138,7 +146,7 @@ export class Navigation {
     if (this.#mode === "orbit") this.orbit.update();
   }
 
-  /** To the side (x), with what it turns around, and toward it (y), `step` metres along the ground. */
+  /** To the side (x), with what it turns around, and toward it (y), `step` metres. */
   #orbitBy(input: Vector2, step: number): void {
     const target = this.orbit.target;
     const offset = this.#camera.position.clone().sub(target);
@@ -146,19 +154,16 @@ export class Navigation {
     // To the right of where the camera faces, along the ground: what it turns around too.
     if (distance > 1e-6)
       target.add(new Vector3(offset.z, 0, -offset.x).multiplyScalar((input.x * step) / distance));
-    const closer =
-      Math.max(distance - input.y * step, MIN_ORBIT_DISTANCE) / Math.max(distance, 1e-6);
-    offset.x *= closer;
-    offset.z *= closer;
-    this.#camera.position.copy(target).add(offset);
+    // Closer along the line the camera looks along (looking down at it, down too).
+    const length = offset.length();
+    const closer = Math.max(length - input.y * step, MIN_ORBIT_DISTANCE) / Math.max(length, 1e-6);
+    this.#camera.position.copy(target).addScaledVector(offset, closer);
   }
 
-  /** Along the ground, where the camera faces: forward (y) and to the right (x). */
+  /** Where the camera looks (y, up too when it looks up) and to its right (x). */
   #walk(input: Vector2, step: number): void {
-    const forward = this.#camera.getWorldDirection(new Vector3()).setY(0);
-    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
-    forward.normalize();
-    const right = new Vector3(-forward.z, 0, forward.x);
+    const forward = this.#camera.getWorldDirection(new Vector3());
+    const right = new Vector3(1, 0, 0).applyQuaternion(this.#camera.quaternion);
     this.#camera.position
       .addScaledVector(forward, input.y * step)
       .addScaledVector(right, input.x * step);
@@ -180,7 +185,9 @@ export class Navigation {
   };
 
   // First person: a drag outside the panels turns the camera toward it (right
-  // to look right); two fingers pinch, to walk forward (apart) and back.
+  // to look right), and one with the right button moves it (the view follows
+  // the pointer, as when orbiting); two fingers pinch, to walk forward (apart)
+  // and back.
   readonly #onPointerDown = (event: PointerEvent) => {
     if (this.#mode !== "first-person") return;
     if (event.pointerType === "touch") {
@@ -190,8 +197,9 @@ export class Navigation {
       if (this.#touches.size > 1) this.#look = null;
     }
     if (this.#look || this.#touches.size > 1) return;
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    this.#look = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    if (event.pointerType === "mouse" && event.button !== 0 && event.button !== 2) return;
+    const pan = event.pointerType === "mouse" && event.button === 2;
+    this.#look = { id: event.pointerId, x: event.clientX, y: event.clientY, pan };
     this.#element.setPointerCapture(event.pointerId);
   };
 
@@ -210,11 +218,21 @@ export class Navigation {
     }
     const look = this.#look;
     if (!look || event.pointerId !== look.id) return;
-    this.#yaw -= (event.clientX - look.x) * LOOK_SPEED;
-    this.#pitch -= (event.clientY - look.y) * LOOK_SPEED;
-    this.#pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.#pitch));
+    const dx = event.clientX - look.x;
+    const dy = event.clientY - look.y;
     look.x = event.clientX;
     look.y = event.clientY;
+    if (look.pan) {
+      // Right to move left, down to move up: the view follows the pointer.
+      const quaternion = this.#camera.quaternion;
+      this.#camera.position
+        .addScaledVector(new Vector3(1, 0, 0).applyQuaternion(quaternion), -dx * PAN_SPEED)
+        .addScaledVector(new Vector3(0, 1, 0).applyQuaternion(quaternion), dy * PAN_SPEED);
+      return;
+    }
+    this.#yaw -= dx * LOOK_SPEED;
+    this.#pitch -= dy * LOOK_SPEED;
+    this.#pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.#pitch));
     this.#applyLook();
   };
 
