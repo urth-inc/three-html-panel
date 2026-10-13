@@ -13,6 +13,10 @@
 // put back, so keys keep reaching the host. A page that is not trusted
 // (sandboxed) must never keep it: then the iframe is blurred when there is
 // nothing to give focus back to.
+//
+// The hidden field also has focus while a button or a link in a panel has it
+// (Enter, Space and Tab act on those), but no text goes in then: inputmode=none
+// keeps the soft keyboard of a phone from showing for it.
 
 export interface KeyboardTarget {
   sendKey(event: KeyboardEvent): void;
@@ -78,6 +82,8 @@ export class PanelKeyboard {
     // One line, so that the caret (and the IME's candidate window, which
     // follows it) moves along the line rather than down a 1px-wide column.
     field.setAttribute("wrap", "off");
+    // No soft keyboard until a text field in a panel has focus (see focus()).
+    field.setAttribute("inputmode", "none");
     Object.assign(field.style, {
       position: "fixed",
       left: "0",
@@ -156,12 +162,22 @@ export class PanelKeyboard {
     this.frames.delete(frame);
   }
 
-  /** Starts sending keys to `target`. */
-  focus(target: KeyboardTarget): void {
+  /**
+   * Starts sending keys to `target`. `typing`: text goes in (a text field or an
+   * editable has focus), so a soft keyboard shows; false for keys only (a
+   * button or a link has focus), and none shows.
+   */
+  focus(target: KeyboardTarget, typing = true): void {
     if (target !== this.target) this.endComposition();
     this.target = target;
     this.field.value = "";
+    this.setSoftKeyboard(typing);
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true });
+  }
+
+  /** Whether text goes into `target` now, if keys go to it (see focus()). */
+  setTyping(target: KeyboardTarget, typing: boolean): void {
+    if (this.target === target) this.setSoftKeyboard(typing);
   }
 
   /** Whether keys go to `target` now. */
@@ -175,7 +191,24 @@ export class PanelKeyboard {
     this.endComposition();
     this.target = null;
     this.placeIme(null);
+    this.setSoftKeyboard(false);
     if (document.activeElement === this.field) this.field.blur();
+  }
+
+  private setSoftKeyboard(shown: boolean): void {
+    const field = this.field;
+    if (shown === !field.hasAttribute("inputmode")) return;
+    if (!shown) {
+      field.setAttribute("inputmode", "none");
+      return;
+    }
+    field.removeAttribute("inputmode");
+    // A soft keyboard opens when the field gets focus, not when its inputmode
+    // changes: focus it again (from a button to a text field in the page).
+    if (document.activeElement === field) {
+      field.blur();
+      field.focus({ preventScroll: true });
+    }
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {

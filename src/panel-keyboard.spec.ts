@@ -146,6 +146,35 @@ describe("soft keyboards", () => {
     expect(field().style.fontSize).toBe("16px");
   });
 
+  it("shows only for a target that takes text, not keys alone (a button in the page)", () => {
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {},
+    };
+    expect(field().getAttribute("inputmode")).toBe("none");
+    keyboard.focus(target, false);
+    expect(document.activeElement).toBe(field());
+    expect(field().getAttribute("inputmode")).toBe("none");
+
+    // A text field gets focus: the field is focused again, which opens the soft keyboard.
+    const focus = vi.spyOn(field(), "focus");
+    keyboard.setTyping(target, true);
+    expect(field().hasAttribute("inputmode")).toBe(false);
+    expect(focus).toHaveBeenCalled();
+    expect(document.activeElement).toBe(field());
+
+    keyboard.setTyping(target, false);
+    expect(field().getAttribute("inputmode")).toBe("none");
+    keyboard.focus(target);
+    expect(field().hasAttribute("inputmode")).toBe(false);
+    keyboard.release(target);
+    expect(field().getAttribute("inputmode")).toBe("none");
+  });
+
   it("turns Backspace and Enter that only show in beforeinput into keys", () => {
     vi.useRealTimers();
     const keys: string[] = [];
