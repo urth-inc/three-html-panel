@@ -218,16 +218,18 @@ describe("what the browser draws outside the page", () => {
     expect(source.hasAttribute("sizes")).toBe(false);
   });
 
-  it("leaves a <picture> empty until it picked a source, not falling back to one it cannot load", () => {
+  it("shows a <picture>'s fallback until it picked a source (a lazy image below the host's viewport may never)", () => {
     document.body.innerHTML = `<picture id="art">
       <source type="image/avif" srcset="dusk-480.avif" />
       <img id="dusk" src="dusk-480.jpg" loading="lazy" alt="" />
     </picture>`;
-    // A lazy image out of view has picked nothing yet.
-    const inlineImage = vi.fn(() => "data:image/jpeg;base64,FALLBACK");
-    const copy = snapshot({ inlineImage });
-    expect(inlineImage).not.toHaveBeenCalled();
-    expect(copy.getElementById("dusk")!.hasAttribute("src")).toBe(false);
+    const fallbackUrl = new URL("dusk-480.jpg", document.baseURI).href;
+    const copy = snapshot({
+      inlineImage: (url) => (url === fallbackUrl ? "data:image/jpeg;base64,FALLBACK" : null),
+    });
+    const image = copy.getElementById("dusk")!;
+    expect(image.getAttribute("src")).toBe("data:image/jpeg;base64,FALLBACK");
+    expect(image.hasAttribute("loading")).toBe(false);
     expect(copy.querySelector("#art source")!.hasAttribute("srcset")).toBe(false);
   });
 
