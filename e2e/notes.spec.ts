@@ -30,6 +30,8 @@ test("lets a soft keyboard show only while a text field has focus", async ({ pag
   expect(await field()).toEqual({ focused: true, inputmode: "none" });
   await panel.focus(await panel.at(`${NOTE} textarea`, 0.8, 0.8));
   await expect.poll(field).toEqual({ focused: true, inputmode: null });
+  // From a button to a text field the hidden field is focused again (to open the
+  // soft keyboard): keys still go in after that.
   await page.keyboard.type("typed here");
   await expect
     .poll(() =>

@@ -167,17 +167,14 @@ export class PanelKeyboard {
   /**
    * Starts sending keys to `target`. `typing`: text goes in (a text field or an
    * editable has focus), so a soft keyboard shows; false for keys only (a
-   * button or a link has focus), and none shows. `tap`: the user just tapped a
-   * text field (called while the touch is handled): the soft keyboard opens
-   * even if the field had focus already and the user had closed it.
+   * button or a link has focus), and none shows.
    */
-  focus(target: KeyboardTarget, typing = true, { tap = false } = {}): void {
+  focus(target: KeyboardTarget, typing = true): void {
     if (target !== this.target) this.endComposition();
     this.target = target;
     this.field.value = "";
-    const opened = this.setSoftKeyboard(typing);
+    this.setSoftKeyboard(typing);
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true });
-    else if (tap && typing && !opened) this.refocus();
   }
 
   /** Whether text goes into `target` now, if keys go to it (see focus()). */
@@ -200,28 +197,25 @@ export class PanelKeyboard {
     if (document.activeElement === this.field) this.field.blur();
   }
 
-  /** Shows or hides the soft keyboard; true if it was just let show on the focused field. */
-  private setSoftKeyboard(shown: boolean): boolean {
-    if (shown === this.softKeyboard) return false;
+  private setSoftKeyboard(shown: boolean): void {
+    if (shown === this.softKeyboard) return;
     this.softKeyboard = shown;
+    const field = this.field;
     if (!shown) {
-      this.field.setAttribute("inputmode", "none");
-      return false;
+      // No text goes in any more: what was being composed is not.
+      this.endComposition();
+      field.setAttribute("inputmode", "none");
+      return;
     }
-    this.field.removeAttribute("inputmode");
+    field.removeAttribute("inputmode");
     // A soft keyboard opens when the field gets focus, not when its inputmode
     // changes: focus it again (from a button to a text field in the page). iOS
     // opens it only for focus moved while a touch is handled, so there only
     // when this runs for a tap (HtmlPanel.focusForTyping).
-    if (document.activeElement !== this.field) return false;
-    this.refocus();
-    return true;
-  }
-
-  /** Focuses the field again, which opens the soft keyboard (if it may show) when it was closed. */
-  private refocus(): void {
-    this.field.blur();
-    this.field.focus({ preventScroll: true });
+    if (document.activeElement === field) {
+      field.blur();
+      field.focus({ preventScroll: true });
+    }
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
