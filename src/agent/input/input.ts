@@ -623,6 +623,9 @@ export class InputSynthesizer {
     // "auto" is the text cursor over editable text, and over text itself.
     const editable = target instanceof this.#window.HTMLElement && target.isContentEditable;
     if (isTextField(target) || editable) return "text";
+    // WebKit leaves links at "auto" and picks the hand cursor natively, where
+    // Chromium and Firefox compute "pointer": the hand is picked here the same way.
+    if (target.closest(":any-link")) return "pointer";
     return this.#pointer && this.#isOverText(this.#pointer.x, this.#pointer.y) ? "text" : "default";
   }
 
