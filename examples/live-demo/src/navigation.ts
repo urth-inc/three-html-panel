@@ -17,17 +17,8 @@ const SPEED = 1.6;
 /** Radians per CSS pixel dragged, in first person. */
 const LOOK_SPEED = 0.004;
 const MAX_PITCH = (85 * Math.PI) / 180;
-/** How close orbiting comes to the panel it turns around, and how far it goes (not to lose the scene). */
-const MIN_ORBIT_DISTANCE = 0.8;
-const MAX_ORBIT_DISTANCE = 12;
-/**
- * How far round the panel orbiting goes, either way from straight in front of
- * it (the panel faces +z): never round to its back, nor through it. Moving
- * round with A and D stops there too (OrbitControls keeps it in).
- */
-const MAX_ORBIT_ANGLE = (75 * Math.PI) / 180;
-/** The lowest the camera goes: above the floor (y = 0). */
-const LOWEST = 0.2;
+/** How close orbiting comes to the panel it turns around. */
+const MIN_ORBIT_DISTANCE = 0.5;
 
 const UP = new Vector3(0, 1, 0);
 
@@ -66,11 +57,10 @@ export class Navigation {
     this.orbit = new OrbitControls(camera, element);
     this.orbit.enableDamping = true;
     this.orbit.minDistance = MIN_ORBIT_DISTANCE;
-    this.orbit.maxDistance = MAX_ORBIT_DISTANCE;
     // Gently: a drag across the view turns a quarter round the panel, not most of the way.
     this.orbit.rotateSpeed = 0.35;
-    this.orbit.minAzimuthAngle = -MAX_ORBIT_ANGLE;
-    this.orbit.maxAzimuthAngle = MAX_ORBIT_ANGLE;
+    // Not below the floor.
+    this.orbit.maxPolarAngle = Math.PI / 2 + 0.1;
     addEventListener("keydown", this.#onKeyDown);
     addEventListener("keyup", this.#onKeyUp);
     addEventListener("blur", () => this.#held.clear());
@@ -141,15 +131,7 @@ export class Navigation {
       if (this.#mode === "orbit") this.#orbitBy(input, step);
       else this.#walk(input, step);
     }
-    if (this.#mode === "orbit") {
-      // Not below the floor: no lower than LOWEST, however far out the orbit is.
-      const distance = this.#camera.position.distanceTo(this.orbit.target);
-      const lowest = (LOWEST - this.orbit.target.y) / Math.max(distance, 1e-6);
-      this.orbit.maxPolarAngle = Math.acos(Math.max(-1, Math.min(1, lowest)));
-      this.orbit.update();
-    } else {
-      this.#camera.position.y = Math.max(this.#camera.position.y, LOWEST);
-    }
+    if (this.#mode === "orbit") this.orbit.update();
   }
 
   /** Round the panel (x) and toward it (y), `step` metres along the ground. */
