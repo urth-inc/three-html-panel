@@ -508,7 +508,7 @@ class Snapshotter {
 
     const copy = this.#remember(element, style, this.#inert.importNode(element, false) as Element);
     this.#copyFormState(element, copy);
-    this.#copyImage(element, copy);
+    this.#copyImage(element, copy, style);
     this.#copyAnimatedValues(element, copy);
     this.#markTopLayer(element, copy);
 
@@ -631,14 +631,32 @@ class Snapshotter {
     return composition?.field === field ? composition.value : field.value;
   }
 
-  #copyImage(element: Element, copy: Element): void {
-    if (!(element instanceof this.#window.HTMLImageElement)) return;
-    copy.removeAttribute("srcset");
+  #copyImage(element: Element, copy: Element, style: CSSStyleDeclaration): void {
+    const { HTMLImageElement, HTMLPictureElement, HTMLSourceElement } = this.#window;
+    // The frame cannot load the candidates: a <picture> would pick a <source>
+    // over the image's data URL. One without srcset is passed over.
+    if (element instanceof HTMLSourceElement || element instanceof HTMLImageElement) {
+      copy.removeAttribute("srcset");
+      copy.removeAttribute("sizes");
+    }
+    if (!(element instanceof HTMLImageElement)) return;
     copy.removeAttribute("loading");
-    const source = element.currentSrc || element.src;
+    // The candidate the browser picked, or none yet (a lazy image out of view):
+    // the fallback in src is not what the page will show.
+    const picked =
+      element.hasAttribute("srcset") || element.parentElement instanceof HTMLPictureElement;
+    const source = element.currentSrc || (picked ? "" : element.src);
     const dataUrl = source ? this.#options.inlineImage(source) : null;
     if (dataUrl) copy.setAttribute("src", dataUrl);
     else copy.removeAttribute("src");
+    // A candidate's size is its pixels over its density (2x, or its width over
+    // sizes): as a plain src, it would be drawn at its pixels. Keep the size it is laid out at.
+    if (picked && copy instanceof HTMLElement) {
+      for (const property of ["width", "height"]) {
+        const value = style.getPropertyValue(property);
+        if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
+      }
+    }
   }
 
   #copyCanvas(canvas: HTMLCanvasElement): Node | null {
