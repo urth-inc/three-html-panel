@@ -233,6 +233,16 @@ describe("what the browser draws outside the page", () => {
     expect(copy.querySelector("#art source")!.hasAttribute("srcset")).toBe(false);
   });
 
+  it("does not fetch a fallback that would stand in for a candidate in no box (an image the page has not sized)", () => {
+    // What an unsized image has before it loads: no box.
+    document.body.innerHTML = `<style>img { width: 0px; height: 0px }</style>
+      <picture><source srcset="dusk.avif" /><img id="dusk" src="dusk.jpg" loading="lazy" alt="" /></picture>`;
+    const inlineImage = vi.fn(() => "data:image/jpeg;base64,FALLBACK");
+    const copy = snapshot({ inlineImage });
+    expect(inlineImage).not.toHaveBeenCalled();
+    expect(copy.getElementById("dusk")!.hasAttribute("src")).toBe(false);
+  });
+
   it("fits a fallback that stands in for a candidate not picked yet in its box, not stretched", () => {
     document.body.innerHTML = `<style>img { width: 120px; height: 200px; object-fit: fill }
         #cover { object-fit: cover }</style>
