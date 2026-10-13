@@ -121,6 +121,8 @@ export const PANEL_SANDBOX = "allow-scripts allow-forms allow-popups";
  * field, which the agent reports as editing) or open a link.
  */
 const USER_ACTION_MS = 1000;
+/** A press's slop is at most this much of the page's larger side (see slopFor). */
+const MAX_SLOP = 0.1;
 /** If the page never answers a tap that took the keyboard (it hangs), the keyboard is let go after this. */
 const TAP_ANSWER_TIMEOUT_MS = 5000;
 
@@ -542,6 +544,31 @@ export class HtmlPanel
     return { x: uv.x * this.pageWidth, y: (1 - uv.y) * this.pageHeight };
   }
 
+  /** How far apart two texture coordinates are in the page (CSS px). */
+  pageDistance(a: Vector2, b: Vector2): number {
+    const from = this.toPage(a);
+    const to = this.toPage(b);
+    return Math.hypot(to.x - from.x, to.y - from.y);
+  }
+
+  /**
+   * A press's slop (see PanelInput) at `uv`: how far in the page (CSS px) the
+   * pointer goes along `rays`, each as far as it may wobble (a few px on the
+   * canvas, a degree for a controller), the farthest of them. At most
+   * MAX_SLOP of the page's larger side: seen nearly edge-on, a ray turned a
+   * little meets the panel's plane very far away. Undefined if none meets it.
+   */
+  slopFor(uv: Vector2, rays: readonly Ray[]): number | undefined {
+    let slop: number | undefined;
+    for (const ray of rays) {
+      const moved = this.uvFromRay(ray);
+      if (moved) slop = Math.max(slop ?? 0, this.pageDistance(uv, moved));
+    }
+    return slop === undefined
+      ? undefined
+      : Math.min(slop, MAX_SLOP * Math.max(this.pageWidth, this.pageHeight));
+  }
+
   /**
    * The texture coordinate where `ray` meets the panel's plane, or null if it
    * runs parallel or points away. Unlike a raycast, this also answers outside
@@ -576,8 +603,12 @@ export class HtmlPanel
     uv: Vector2 | null = null,
     shiftKey = false,
     input: PointerInput = "mouse",
-    /** Ctrl and Cmd held: they add an option to a list box's selection. */
-    modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {},
+    /**
+     * Ctrl and Cmd held: they add an option to a list box's selection. `slop`,
+     * with a press: how far (CSS px of the page) it may move and still be a
+     * tap (see PanelInput).
+     */
+    modifiers: { ctrlKey?: boolean; metaKey?: boolean; slop?: number } = {},
   ): void {
     if (kind === "down") this.lastInput = input;
     if (kind === "down" || kind === "up") this.pointersSent++;
@@ -589,8 +620,18 @@ export class HtmlPanel
     if (kind === "down") this.pressing = true;
     else if (kind === "up" || kind === "leave") this.pressing = false;
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 };
-    const { ctrlKey = false, metaKey = false } = modifiers;
-    this.send({ type: "pointer", kind, x, y, shiftKey, ctrlKey, metaKey, input });
+    const { ctrlKey = false, metaKey = false, slop } = modifiers;
+    this.send({
+      type: "pointer",
+      kind,
+      x,
+      y,
+      shiftKey,
+      ctrlKey,
+      metaKey,
+      input,
+      ...(kind === "down" && slop !== undefined && Number.isFinite(slop) ? { slop } : {}),
+    });
   }
 
   wheel(uv: Vector2, deltaX: number, deltaY: number): void {

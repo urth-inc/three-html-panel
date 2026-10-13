@@ -1,4 +1,12 @@
-import { EventDispatcher, Group, Mesh, PlaneGeometry, Vector2, type WebGLRenderer } from "three";
+import {
+  EventDispatcher,
+  Group,
+  Mesh,
+  PlaneGeometry,
+  Vector2,
+  type Ray,
+  type WebGLRenderer,
+} from "three";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { HtmlPanel } from "./html-panel";
 import { PanelXRPointer } from "./panel-xr-pointer";
@@ -13,6 +21,16 @@ function fakePanel() {
     wheel: vi.fn((...args: unknown[]) => calls.push(["wheel", ...args])),
     blur: vi.fn(() => calls.push(["blur"])),
     uvFromRay: () => new Vector2(0.5, 0.5),
+    pageDistance: () => 0,
+    // As HtmlPanel's, without its clamp.
+    slopFor(this: HtmlPanel, uv: Vector2, rays: readonly Ray[]) {
+      let slop: number | undefined;
+      for (const ray of rays) {
+        const moved = this.uvFromRay(ray);
+        if (moved) slop = Math.max(slop ?? 0, this.pageDistance(uv, moved));
+      }
+      return slop;
+    },
   });
   mesh.updateMatrixWorld();
   return mesh as HtmlPanel & { calls: unknown[][] };
@@ -67,6 +85,16 @@ describe("PanelXRPointer", () => {
       "move",
       "up",
     ]);
+  });
+
+  it("tells the page how far the ray may tremble, in its px", () => {
+    panel.uvFromRay = (ray) => new Vector2(0.5 + ray.direction.x, 0.5 + ray.direction.y);
+    panel.pageDistance = (a, b) => a.distanceTo(b) * 1000;
+    connect(0);
+    aim(0, true);
+    controllers[0]!.dispatchEvent({ type: "selectstart" } as never);
+    const down = panel.calls.find((call) => call[0] === "pointer" && call[1] === "down")!;
+    expect((down[5] as { slop: number }).slop).toBeCloseTo(17, 0);
   });
 
   it("ends typing into the panels when the trigger presses something else", () => {

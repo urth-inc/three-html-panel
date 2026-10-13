@@ -37,6 +37,8 @@ import type { FrameWindow } from "../../types";
 import {
   absolutizeUrls,
   agentSheets,
+  declarationsOf,
+  writtenBlockOf,
   liveSelector,
   pageStylesheets,
   ruleCount,
@@ -624,16 +626,30 @@ export class LiveInteractionCss {
     return out;
   }
 
+  /** Whether any of these rules (or the rules in them) has a selector to rewrite. */
+  #hasInteractionRules(rules: CSSRuleList | undefined): boolean {
+    return Array.from(rules ?? []).some(
+      (rule) =>
+        ("selectorText" in rule && liveSelector((rule as CSSStyleRule).selectorText) !== null) ||
+        ("cssRules" in rule && this.#hasInteractionRules((rule as CSSGroupingRule).cssRules)),
+    );
+  }
+
   /** A rule, or what of it is an interaction rule (`interactive`: inside one already); null if none. */
   #interactionRule(rule: CSSRule, interactive: boolean): string | null {
     const { CSSStyleRule } = this.#window;
     if (rule instanceof CSSStyleRule) {
       const selector = liveSelector(rule.selectorText);
       const inside = interactive || selector !== null;
+      // Values the CSSOM lost: the block as written, when nothing in it has to be rewritten.
+      const written = inside ? writtenBlockOf(rule) : null;
+      if (written !== null && !this.#hasInteractionRules(rule.cssRules))
+        return `${selector ?? rule.selectorText}{${written}}`;
       // Nested rules (CSS nesting): selectors rewritten one by one, the declarations left as they are.
       const nested = rule.cssRules ? this.#interactionRules(rule.cssRules, inside) : [];
       if (!inside && nested.length === 0) return null;
-      const declarations = inside ? rule.style.cssText : "";
+      // As written where the CSSOM lost some (declarationsOf): the copy is the page's only one that applies.
+      const declarations = inside ? declarationsOf(rule) : "";
       return `${selector ?? rule.selectorText}{${declarations}${nested.join("\n")}}`;
     }
     if ("cssRules" in rule) {

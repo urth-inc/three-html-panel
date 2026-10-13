@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import {
   PerspectiveCamera,
+  Ray,
   Scene,
   Vector2,
   Vector4,
@@ -111,6 +112,19 @@ describe("the panel's iframe", () => {
     const trusted = open(false, keyboard);
     expect(register).toHaveBeenCalledWith(sandboxed.iframe, { sandboxed: true });
     expect(register).toHaveBeenCalledWith(trusted.iframe, { sandboxed: false });
+  });
+
+  it("tells how far a press may wobble in the page, at most a tenth of its larger side", () => {
+    const panel = open();
+    const at = new Vector2(0.5, 0.5);
+    // 0.01 of the panel across: 8 px of an 800 px wide page.
+    panel.uvFromRay = () => new Vector2(0.51, 0.5);
+    expect(panel.slopFor(at, [new Ray()])).toBeCloseTo(8);
+    // Seen nearly edge-on, the ray meets the plane far away: no more than 80 px.
+    panel.uvFromRay = () => new Vector2(40, 0.5);
+    expect(panel.slopFor(at, [new Ray()])).toBeCloseTo(80);
+    panel.uvFromRay = () => null;
+    expect(panel.slopFor(at, [new Ray()])).toBeUndefined();
   });
 
   describe("a page that focuses a text field on its own", () => {

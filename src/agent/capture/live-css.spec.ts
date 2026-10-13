@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { pageStylesheets } from "./css";
+import { pageStylesheets, parseInto } from "./css";
 import { hasTransition, LiveInteractionCss } from "./live-css";
 
 let live: LiveInteractionCss | null = null;
@@ -315,6 +315,57 @@ describe("LiveInteractionCss", () => {
         (document as unknown as { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets,
       ).toHaveLength(0);
     } finally {
+      delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
+    }
+  });
+
+  it("copies an interaction rule whose values the CSSOM lost as the sheet wrote it", () => {
+    Object.defineProperty(document, "adoptedStyleSheets", {
+      configurable: true,
+      writable: true,
+      value: [],
+    });
+    // jsdom drops a var() shorthand whole, as the CSSOM's text has it; browsers also
+    // give the longhands it set as "" (lostProperties), standing in for here.
+    const probe = new CSSStyleSheet();
+    probe.replaceSync(".probe { color: red }");
+    const proto = Object.getPrototypeOf(
+      (probe.cssRules[0] as CSSStyleRule).style,
+    ) as CSSStyleDeclaration;
+    // Called with .call on each declaration below.
+    // oxlint-disable-next-line typescript/unbound-method -- see above
+    const getPropertyValue = proto.getPropertyValue;
+    vi.spyOn(proto, "getPropertyValue").mockImplementation(function (
+      this: CSSStyleDeclaration,
+      property: string,
+    ) {
+      // The rules here that override a longhand of their var() shorthand.
+      return this.cssText.includes("-top-color") ? "" : getPropertyValue.call(this, property);
+    });
+    try {
+      document.head.innerHTML = "<style>.tools { display: none }</style>";
+      document.body.innerHTML = ROW;
+      const copy = new CSSStyleSheet();
+      parseInto(
+        copy,
+        ".row:hover .tools { border: 1px solid var(--c); border-top-color: red }" +
+          " @media all { .m:hover { border: 3px solid var(--c); border-top-color: red } }",
+      );
+      // What the agent's sheet is given (jsdom drops a var() shorthand from its rules too).
+      const replace = vi.spyOn(CSSStyleSheet.prototype, "replaceSync");
+      live = new LiveInteractionCss(document, (sheet) =>
+        sheet === document.styleSheets[0] ? copy : null,
+      );
+      live.sync();
+      const css = String(replace.mock.calls.at(-1)![0]);
+      expect(css).toContain(".row:is(:hover,[data-thp-hover]) .tools");
+      expect(css).toContain("1px solid var(--c)");
+      // In a block of rules too.
+      expect(css).toContain("3px solid var(--c)");
+      live.dispose();
+      live = null;
+    } finally {
+      vi.restoreAllMocks();
       delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
     }
   });

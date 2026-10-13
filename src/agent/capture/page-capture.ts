@@ -35,7 +35,18 @@ import { LiveInteractionCss } from "./live-css";
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol";
 import { RenderPacer } from "./pacer";
 import { OpenOrder } from "../input/top-layer";
-import { buildFrameSvg, isSampledLive, snapshotDocument, type ListBoxRow } from "./snapshot";
+import {
+  buildFrameSvg,
+  isIndeterminateProgress,
+  isSampledLive,
+  matchLostDeclarations,
+  snapshotDocument,
+  type ListBoxRow,
+  type LostMatches,
+} from "./snapshot";
+
+/** Events after which a form control's state (:checked, :valid…) may have changed, with no attribute. */
+const STATE_EVENTS = ["input", "change"];
 
 /** Events after which the page may look different. */
 const INVALIDATING_EVENTS = [
@@ -119,6 +130,21 @@ export class PageCapture {
   #selectionBoxesCache: { key: SelectionKey; boxes: SelectionBox[] } | null = null;
   readonly #openOrder: OpenOrder;
   #selectionTextCache: { key: SelectionKey; text: string } | null = null;
+  /**
+   * The elements of the rules whose values the CSSOM lost, found again only
+   * when the rules or the page changed: not on every frame an animation asks for.
+   */
+  #lostMatches: {
+    lost: DocumentCss["lost"];
+    version: number;
+    matches: LostMatches;
+  } | null = null;
+  /**
+   * Bumped when which elements a selector matches may have changed: the DOM
+   * changed (the agent's interaction marks too), or a form control's state
+   * (:checked, :valid), which changes no attribute.
+   */
+  #matchVersion = 0;
   #started = false;
   #disposed = false;
   /**
@@ -162,6 +188,7 @@ export class PageCapture {
     );
     this.#openOrder = new OpenOrder(this.#window);
     this.#mutations = new this.#window.MutationObserver((records) => {
+      this.#matchVersion++;
       // The agent's own interaction marks: changing them is input, which says
       // itself whether the page may look different (see optimizeHover).
       const changes = records.filter(
@@ -196,6 +223,7 @@ export class PageCapture {
     });
     for (const type of INVALIDATING_EVENTS)
       this.#window.addEventListener(type, this.#changed, true);
+    for (const type of STATE_EVENTS) this.#window.addEventListener(type, this.#stateChanged, true);
     // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
     // of elements do not reach the window.
     document.addEventListener("load", this.#stylesheetsChanged, true);
@@ -265,6 +293,8 @@ export class PageCapture {
     this.#mutations.disconnect();
     for (const type of INVALIDATING_EVENTS)
       this.#window.removeEventListener(type, this.#changed, true);
+    for (const type of STATE_EVENTS)
+      this.#window.removeEventListener(type, this.#stateChanged, true);
     this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
     this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
     this.#openOrder.dispose();
@@ -294,6 +324,10 @@ export class PageCapture {
     this.#liveCss.invalidate();
     this.#inlineTransition = null;
     this.#invalidate();
+  };
+
+  readonly #stateChanged = () => {
+    this.#matchVersion++;
   };
 
   readonly #transitionRan = () => {
@@ -358,8 +392,7 @@ export class PageCapture {
         this.#renderedAt + Math.max(this.#pacer.record(this.#renderedAt - started), this.#paceMs);
     }
     // Keep sampling while something is animating or a video plays, so the panel shows it moving.
-    if (this.#dirty || (!this.#hidden && (this.#hasLiveAnimations() || this.#hasPlayingVideo())))
-      this.#invalidate();
+    if (this.#dirty || (!this.#hidden && this.#isMoving())) this.#invalidate();
   }
 
   /** Captures the page and sends it, unless it looks as it did in the frame sent last. */
@@ -392,6 +425,8 @@ export class PageCapture {
       : range
         ? selectionColorAt(this.#window, range)
         : undefined;
+    // Collected first: the snapshot takes what the CSSOM lost of it from the page (DocumentCss.lost).
+    const sheets = this.#css.get();
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
     const xhtml = this.#measure(() =>
       snapshotDocument(this.#document, {
@@ -411,9 +446,10 @@ export class PageCapture {
         listBox: isListBox(focused) ? focused : null,
         openedAt: (element) => this.#openOrder.at(element),
         inlineImage: (url) => this.#images.get(url),
+        lost: this.#lostElements(),
       }),
     );
-    const svg = buildFrameSvg(xhtml, this.#css.get(), width, height);
+    const svg = buildFrameSvg(xhtml, sheets, width, height);
     if (svg !== this.#lastSvg) {
       this.#lastSvg = svg;
       this.#options.onFrame({ svg, width, height });
@@ -462,6 +498,44 @@ export class PageCapture {
       });
     }
     return rows;
+  }
+
+  /** The elements of the rules whose values the CSSOM lost (see DocumentCss.lost), once get() collected them. */
+  #lostElements(): LostMatches {
+    const lost = this.#css.lost;
+    const cached = this.#lostMatches;
+    const version = this.#matchVersion;
+    if (cached?.lost === lost && cached.version === version) return cached.matches;
+    const matches = matchLostDeclarations(this.#document, lost);
+    this.#lostMatches = { lost, version, matches };
+    return matches;
+  }
+
+  /** Whether anything on the page moves by itself: an animation, a video, an indeterminate <progress> in view (see snapshot.ts). */
+  #isMoving(): boolean {
+    return this.#hasLiveAnimations() || this.#hasPlayingVideo() || this.#hasIndeterminateInView();
+  }
+
+  #hasIndeterminateInView(): boolean {
+    const { innerWidth, innerHeight } = this.#window;
+    return Array.from(this.#document.querySelectorAll("progress")).some((progress) => {
+      if (!isIndeterminateProgress(this.#window, progress)) return false;
+      // Hidden (visibility, opacity), it shows nothing moving. Not in Safari before 17.4.
+      if (
+        typeof progress.checkVisibility === "function" &&
+        !progress.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+      )
+        return false;
+      const box = progress.getBoundingClientRect();
+      return (
+        box.width > 0 &&
+        box.height > 0 &&
+        box.right > 0 &&
+        box.bottom > 0 &&
+        box.left < innerWidth &&
+        box.top < innerHeight
+      );
+    });
   }
 
   #hasPlayingVideo(): boolean {

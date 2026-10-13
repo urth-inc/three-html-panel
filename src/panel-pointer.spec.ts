@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Mesh, PerspectiveCamera, PlaneGeometry, Vector2 } from "three";
+import { Mesh, PerspectiveCamera, PlaneGeometry, Vector2, type Ray } from "three";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { HtmlPanel } from "./html-panel";
 import { PanelPointer } from "./panel-pointer";
@@ -23,6 +23,16 @@ beforeEach(() => {
     blur: vi.fn(),
     focusForTyping: vi.fn(() => true),
     uvFromRay: () => new Vector2(0.5, 0.5),
+    pageDistance: () => 0,
+    // As HtmlPanel's, without its clamp.
+    slopFor(this: HtmlPanel, uv: Vector2, rays: readonly Ray[]) {
+      let slop: number | undefined;
+      for (const ray of rays) {
+        const moved = this.uvFromRay(ray);
+        if (moved) slop = Math.max(slop ?? 0, this.pageDistance(uv, moved));
+      }
+      return slop;
+    },
     cursor: "default",
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -33,10 +43,10 @@ beforeEach(() => {
   pointer = new PanelPointer(camera, canvas, () => [panel]);
 });
 
-const at = (type: string, pointerType: string) =>
+const at = (type: string, pointerType: string, clientX = 400, clientY = 300) =>
   new PointerEvent(type, {
-    clientX: 400,
-    clientY: 300,
+    clientX,
+    clientY,
     button: 0,
     pointerId: 1,
     pointerType,
@@ -95,6 +105,32 @@ describe("PanelPointer", () => {
     touch("touchstart", [down], [down]);
     touch("touchend", [], [{ identifier: 2, clientX: 400, clientY: 300 }]);
     expect(panel.focusForTyping).not.toHaveBeenCalled();
+  });
+
+  it("tells the page how far a finger may wobble, in its px; not for a mouse", () => {
+    // 1/1000 of the panel per unit the ray turns across; the page 1000 px wide.
+    panel.uvFromRay = (ray) => new Vector2(0.5 + ray.direction.x, 0.5 + ray.direction.y);
+    panel.pageDistance = (a, b) => a.distanceTo(b) * 1000;
+    canvas.dispatchEvent(at("pointerdown", "touch"));
+    const slop = (
+      panel.pointer.mock.calls.find((call) => call[0] === "down")![4] as { slop?: number }
+    ).slop;
+    expect(slop).toBeGreaterThan(0);
+    canvas.dispatchEvent(at("pointerup", "touch"));
+    panel.pointer.mockClear();
+    canvas.dispatchEvent(at("pointerdown", "mouse"));
+    expect(panel.pointer.mock.calls.find((call) => call[0] === "down")![4]).not.toHaveProperty(
+      "slop",
+      expect.anything(),
+    );
+  });
+
+  it("sends every move of a finger, for the page to tell a tap from a drag", () => {
+    const sent = () => panel.pointer.mock.calls.filter((call) => call[0] !== "leave");
+    canvas.dispatchEvent(at("pointerdown", "touch"));
+    canvas.dispatchEvent(at("pointermove", "touch", 402, 300));
+    canvas.dispatchEvent(at("pointerup", "touch", 402, 300));
+    expect(sent().map((call) => call[0])).toEqual(["down", "move", "up"]);
   });
 
   it("ends a press still held when it is disposed", () => {

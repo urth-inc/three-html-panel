@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { buildFrameSvg, endOffsetOf, isSampledLive, snapshotDocument } from "./snapshot";
+import {
+  buildFrameSvg,
+  endOffsetOf,
+  isSampledLive,
+  matchLostDeclarations,
+  snapshotDocument,
+} from "./snapshot";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -101,6 +107,92 @@ describe("animated values in the image", () => {
     // jsdom's computed value is the element's own; in a browser, the animated one.
     expect(spinning.style.getPropertyValue("opacity")).toBe("0.3");
     expect(spinning.style.getPropertyPriority("opacity")).toBe("important");
+  });
+});
+
+describe("what the CSSOM loses", () => {
+  it("copies the values of a rule's lost properties as computed, to the elements it matches", () => {
+    document.body.innerHTML =
+      `<span id="spinner" class="spinner" style="padding-left: 3px"></span>` +
+      `<span id="other" style="padding-left: 4px"></span>`;
+    document.getAnimations = () => [];
+    const xhtml = snapshotDocument(document, {
+      inlineImage: () => null,
+      lost: matchLostDeclarations(document, [
+        { selector: ".spinner", properties: ["padding-left"] },
+        // Not a selector on its own: left out.
+        { selector: "> .spinner", properties: ["border-top-style"] },
+      ]),
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    const spinner = copy.getElementById("spinner") as HTMLElement;
+    expect(spinner.style.getPropertyValue("padding-left")).toBe("3px");
+    expect(spinner.style.getPropertyPriority("padding-left")).toBe("important");
+    expect(spinner.style.getPropertyValue("border-top-style")).toBe("");
+    const other = copy.getElementById("other") as HTMLElement;
+    expect(other.style.getPropertyPriority("padding-left")).toBe("");
+  });
+});
+
+describe("matchLostDeclarations", () => {
+  it("finds the elements of each selector in a list, and the pseudo-element a selector is for", () => {
+    document.body.innerHTML = `<i id="a" class="a"></i><b id="b" class="b"></b>`;
+    const a = document.getElementById("a")!;
+    const b = document.getElementById("b")!;
+    const matches = matchLostDeclarations(document, [
+      { selector: ".a, .b::after", properties: ["border-top-width"] },
+      { selector: ".a:before", properties: ["border-top-style"] },
+    ]);
+    expect(matches.get(a)).toEqual(
+      new Map([
+        ["", ["border-top-width"]],
+        ["::before", ["border-top-style"]],
+      ]),
+    );
+    expect(matches.get(b)).toEqual(new Map([["::after", ["border-top-width"]]]));
+  });
+
+  it("matches an interaction rule's selector as on the live page, by its attribute", () => {
+    document.body.innerHTML = `<i id="a" class="a" data-thp-hover=""></i>`;
+    const matches = matchLostDeclarations(document, [
+      { selector: ".a:hover", properties: ["border-top-width"] },
+    ]);
+    expect(matches.get(document.getElementById("a")!)?.get("")).toEqual(["border-top-width"]);
+  });
+
+  it("puts what a pseudo-element lost in a rule of its own for the element's copy", () => {
+    document.body.innerHTML = `<i id="a" class="a"></i>`;
+    document.getAnimations = () => [];
+    const computed = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      pseudo === "::after"
+        ? ({ getPropertyValue: () => "3px" } as unknown as CSSStyleDeclaration)
+        : computed(element),
+    );
+    const xhtml = snapshotDocument(document, {
+      inlineImage: () => null,
+      lost: matchLostDeclarations(document, [
+        { selector: ".a::after", properties: ["border-top-width"] },
+      ]),
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    const mark = copy.getElementById("a")!.getAttribute("data-thp-lost");
+    expect(mark).not.toBeNull();
+    expect(xhtml).toContain(`[data-thp-lost="${mark}"]::after{border-top-width:3px!important}`);
+  });
+});
+
+describe("indeterminate <progress>", () => {
+  it("is drawn by the agent, its bar where the time has it; one with a value is the browser's", () => {
+    document.body.innerHTML = `<progress id="waiting"></progress><progress id="done" value="1"></progress>`;
+    document.getAnimations = () => [];
+    const xhtml = snapshotDocument(document, { inlineImage: () => null });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    const waiting = copy.getElementById("waiting") as HTMLElement;
+    expect(waiting.hasAttribute("data-thp-indeterminate")).toBe(true);
+    expect(waiting.style.getPropertyValue("background")).toContain("linear-gradient");
+    expect(copy.getElementById("done")!.hasAttribute("data-thp-indeterminate")).toBe(false);
+    expect(xhtml).toContain("[data-thp-indeterminate]{appearance:none!important");
   });
 });
 

@@ -8,7 +8,9 @@
 //   orbit the camera.
 //
 // Whether a press and release make a click is decided in the page (input.ts), from how
-// far the pointer moved in the page.
+// far the pointer moved in the page. A finger's press says how far that is for
+// TAP_SLOP_PX on the canvas (its slop): on a panel drawn small, a finger's
+// slight wobble is many px of the page.
 //
 // While the pointer is over a panel (or dragging in one), the canvas shows the
 // mouse cursor the page asks for there.
@@ -17,7 +19,7 @@
 // tap on a text field takes the keyboard while the touchend is handled, which
 // is when iOS opens its soft keyboard (HtmlPanel.focusForTyping).
 
-import { Raycaster, Vector2, type Camera } from "three";
+import { Raycaster, Vector2, type Camera, type Ray } from "three";
 import type { HtmlPanel } from "./html-panel";
 import type { PointerInput } from "./types";
 
@@ -88,8 +90,21 @@ export class PanelPointer {
     this.element.setPointerCapture(event.pointerId);
     this.pressed = { panel: hit.panel, pointerId: event.pointerId };
     this.hover(hit.panel);
-    hit.panel.pointer("down", hit.uv, event.shiftKey, inputOf(event), modifiersOf(event));
+    const input = inputOf(event);
+    const slop = input === "touch" ? hit.panel.slopFor(hit.uv, this.slopRays(event)) : undefined;
+    hit.panel.pointer("down", hit.uv, event.shiftKey, input, { ...modifiersOf(event), slop });
   };
+
+  /** The rays through the points TAP_SLOP_PX across and down from where a finger pressed (see HtmlPanel.slopFor). */
+  private slopRays(event: { clientX: number; clientY: number }): Ray[] {
+    return [
+      [TAP_SLOP_PX, 0],
+      [0, TAP_SLOP_PX],
+    ].map(([dx, dy]) => {
+      this.setRay({ clientX: event.clientX + dx!, clientY: event.clientY + dy! });
+      return this.raycaster.ray.clone();
+    });
+  }
 
   private readonly onPointerMove = (event: PointerEvent) => {
     if (this.pressed) {
