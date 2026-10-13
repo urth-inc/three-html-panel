@@ -231,10 +231,14 @@ function collectAnimatedValues(document: Document): Map<Element, Map<string, str
  * browser draws, moving by itself. One the page styles itself (appearance:
  * none) is the page's to draw, as it is.
  */
-export const isIndeterminateProgress = (window: FrameWindow, element: Element) =>
+export const isIndeterminateProgress = (
+  window: FrameWindow,
+  element: Element,
+  style?: CSSStyleDeclaration,
+) =>
   element instanceof window.HTMLProgressElement &&
   !element.hasAttribute("value") &&
-  window.getComputedStyle(element).appearance !== "none";
+  (style ?? window.getComputedStyle(element)).appearance !== "none";
 /** How long the bar of an indeterminate <progress> takes to cross it (ms), and how much of it it covers. */
 const INDETERMINATE_PERIOD_MS = 2000;
 const INDETERMINATE_BAR = 0.3;
@@ -892,7 +896,7 @@ class Snapshotter {
    * capture goes on while one shows (see PageCapture).
    */
   #copyIndeterminateProgress(element: Element, copy: Element, style: CSSStyleDeclaration): void {
-    if (!isIndeterminateProgress(this.#window, element) || !isStyled(copy)) return;
+    if (!isIndeterminateProgress(this.#window, element, style) || !isStyled(copy)) return;
     if (!this.#indeterminateRules) {
       this.generatedRules.push(...INDETERMINATE_RULES);
       this.#indeterminateRules = true;

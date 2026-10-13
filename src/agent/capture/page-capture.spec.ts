@@ -87,14 +87,16 @@ describe("an indeterminate <progress>", () => {
   }
 
   it("keeps the panel capturing while one shows, to draw it moving", async () => {
-    Object.assign(window, { innerWidth: 300, innerHeight: 150 });
+    vi.stubGlobal("innerWidth", 300);
+    vi.stubGlobal("innerHeight", 150);
     progressAt(20);
     capture.start();
     expect(await capturesInASecond()).toBeGreaterThan(10);
   });
 
   it("does not while it is hidden, out of view, or has a value", async () => {
-    Object.assign(window, { innerWidth: 300, innerHeight: 150 });
+    vi.stubGlobal("innerWidth", 300);
+    vi.stubGlobal("innerHeight", 150);
     const hidden = progressAt(20, false);
     const below = progressAt(500);
     const done = progressAt(20);

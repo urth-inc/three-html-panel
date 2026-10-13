@@ -138,11 +138,12 @@ export class PanelXRPointer {
     return this.raycaster.intersectObject(keyboard, false)[0]?.uv ?? null;
   }
 
+  /** The panel a controller points at, where, and its ray (the raycaster's: until the next raycast). */
   private pick(controller: Controller): { panel: HtmlPanel; uv: Vector2; ray: Ray } | null {
     this.raycaster.setFromXRController(controller.space);
     const hit = this.raycaster.intersectObjects(this.panels() as HtmlPanel[], false)[0];
     if (!hit?.uv) return null;
-    return { panel: hit.object as HtmlPanel, uv: hit.uv, ray: this.raycaster.ray.clone() };
+    return { panel: hit.object as HtmlPanel, uv: hit.uv, ray: this.raycaster.ray };
   }
 
   private press(controller: Controller): void {
