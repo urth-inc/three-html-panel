@@ -7,6 +7,8 @@
 
 Show existing web pages — scripts included, from any origin — as interactive panels in a three.js scene.
 
+**[Live demo](https://three-html-panel-demo.pages.dev/)**: real sites, each on its own origin, as panels you can use in 3D.
+
 - Mouse, touch and VR controllers: hover, click, drag, wheel and touch scrolling
 - Keyboard and IME, text selection, copy and paste, undo
 - Form controls (`<select>`, list boxes, checkboxes, text fields, contenteditable), scrollbars, video
