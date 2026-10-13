@@ -51,8 +51,8 @@ importers:
   examples/live-demo:
     dependencies:
       '@urth/three-html-panel':
-        specifier: 0.2.2
-        version: 0.2.2(three@0.186.1)
+        specifier: 0.2.3
+        version: 0.2.3(three@0.186.1)
       three:
         specifier: 0.186.1
         version: 0.186.1
@@ -124,8 +124,8 @@ importers:
         specifier: 3.31.4
         version: 3.31.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)
       '@urth/three-html-panel':
-        specifier: 0.2.2
-        version: 0.2.2(three@0.186.1)
+        specifier: 0.2.3
+        version: 0.2.3(three@0.186.1)
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -164,8 +164,8 @@ importers:
   examples/sites/gallery:
     dependencies:
       '@urth/three-html-panel':
-        specifier: 0.2.2
-        version: 0.2.2(three@0.186.1)
+        specifier: 0.2.3
+        version: 0.2.3(three@0.186.1)
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: 7.3.1
@@ -192,8 +192,8 @@ importers:
         specifier: 7.4.47
         version: 7.4.47
       '@urth/three-html-panel':
-        specifier: 0.2.2
-        version: 0.2.2(three@0.186.1)
+        specifier: 0.2.3
+        version: 0.2.3(three@0.186.1)
       vue:
         specifier: 3.5.43
         version: 3.5.43(typescript@6.0.3)
@@ -223,8 +223,8 @@ importers:
   examples/sites/web-standards:
     dependencies:
       '@urth/three-html-panel':
-        specifier: 0.2.2
-        version: 0.2.2(three@0.186.1)
+        specifier: 0.2.3
+        version: 0.2.3(three@0.186.1)
     devDependencies:
       vite:
         specifier: 'catalog:'
@@ -1067,8 +1067,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@urth/three-html-panel@0.2.2':
-    resolution: {integrity: sha512-87/+xrLzpwWnI9EnCSvO5dkPOJMTkfzyfgugUpNQOAqO92iN2VJe5aLAq7UJH2N47/uxV435Q9UeloQ94z0O6A==}
+  '@urth/three-html-panel@0.2.3':
+    resolution: {integrity: sha512-1iK5SrZ0w8E/nM2rMbcPmhpWMoVSLK47lbYwNIytM++SEDpCRAVQsIBjGPdrSt31VOiohxfsLpPx49m+6+15PQ==}
     peerDependencies:
       three: '>=0.158.0'
 
@@ -2986,7 +2986,7 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@urth/three-html-panel@0.2.2(three@0.186.1)':
+  '@urth/three-html-panel@0.2.3(three@0.186.1)':
     dependencies:
       three: 0.186.1
 
