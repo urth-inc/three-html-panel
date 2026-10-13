@@ -1,7 +1,6 @@
 import {
   AmbientLight,
   BufferGeometry,
-  Clock,
   Color,
   DirectionalLight,
   GridHelper,
@@ -9,6 +8,7 @@ import {
   LineBasicMaterial,
   PerspectiveCamera,
   Scene,
+  Timer,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -164,9 +164,12 @@ addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-const clock = new Clock();
-renderer.setAnimationLoop(() => {
-  const seconds = Math.min(clock.getDelta(), 0.1);
+// The time between frames, for moving; not counting the time the page was hidden.
+const timer = new Timer();
+timer.connect(document);
+renderer.setAnimationLoop((time) => {
+  timer.update(time);
+  const seconds = Math.min(timer.getDelta(), 0.1);
   xrPointer.update();
   // In VR, the headset moves the view.
   if (!renderer.xr.isPresenting) navigation.update(seconds);
