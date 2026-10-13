@@ -47,6 +47,8 @@ const FORWARDED_KEYS = new Set([
   "PageUp",
   "PageDown",
 ]);
+/** How much a soft keyboard shrinks the visual viewport at least: more than a browser's bars do. */
+const SOFT_KEYBOARD_MIN_PX = 120;
 /** beforeinput edits that soft keyboards make without telling which key it was. */
 const SOFT_KEYBOARD_KEYS: Record<string, string> = {
   deleteContentBackward: "Backspace",
@@ -71,12 +73,10 @@ export class PanelKeyboard {
   /** Text goes into the target: a soft keyboard may show (the field has no inputmode=none). */
   private softKeyboard = false;
   /**
-   * The field got its focus while a tap was handled (see focus()), and the soft
-   * keyboard iOS showed for it is still up. Focus it got otherwise (a page that
-   * focuses a field on its own) showed none; nor does it once the keyboard is
-   * put away, which leaves the field focused on an iPad.
+   * The visual viewport with no soft keyboard up, as unzoomed CSS px: its
+   * width, and the largest height seen at that width (see softKeyboardUp).
    */
-  private focusedByTap = false;
+  private fullViewport = { width: 0, height: 0 };
   /** The target that was last sent composed text, until it is told composition ended. */
   private composingFor: KeyboardTarget | null = null;
   private lastHostFocus: HTMLElement | null = null;
@@ -128,17 +128,10 @@ export class PanelKeyboard {
       this.endComposition();
       this.flush();
     });
-    field.addEventListener("blur", () => {
-      this.focusedByTap = false;
-      setTimeout(this.checkFocus, 0);
-    });
-    // A soft keyboard shrinks the visual viewport while it is up: back to the
-    // window's height, it is gone (or there was none: then a tap only focuses
-    // the field again).
-    window.visualViewport?.addEventListener("resize", () => {
-      const viewport = window.visualViewport!;
-      if (viewport.height * viewport.scale >= window.innerHeight - 1) this.focusedByTap = false;
-    });
+    field.addEventListener("blur", () => setTimeout(this.checkFocus, 0));
+    // Its full height, seen before a soft keyboard shrinks it.
+    this.measureViewport();
+    window.visualViewport?.addEventListener("resize", () => this.measureViewport());
 
     document.addEventListener(
       "focusin",
@@ -191,19 +184,43 @@ export class PanelKeyboard {
     if (target !== this.target) this.endComposition();
     this.target = target;
     this.field.value = "";
-    this.setSoftKeyboard(typing, tap);
-    // Focused already, but not by a tap (the page focused a field on its own,
-    // as it loaded): no soft keyboard showed for it. A tap focuses it again,
-    // which opens one.
-    if (tap && typing && !this.focusedByTap && document.activeElement === this.field)
+    this.setSoftKeyboard(typing);
+    // Focused already, with no soft keyboard up: focus came outside a tap (the
+    // page focused a field on its own, as it loaded), or the keyboard was put
+    // away and the field kept focus (an iPad), or there was none to show (a
+    // hardware keyboard, since detached). A tap focuses it again, which opens one.
+    if (tap && typing && document.activeElement === this.field && !this.softKeyboardUp())
       this.field.blur();
-    if (document.activeElement !== this.field) this.focusField(tap);
+    if (document.activeElement !== this.field) this.focusField();
   }
 
-  /** Focuses the field; `tap`: while a tap is handled (see focusedByTap). */
-  private focusField(tap: boolean): void {
+  private focusField(): void {
     this.field.focus({ preventScroll: true });
-    this.focusedByTap = tap;
+  }
+
+  /** Notes the visual viewport's full height (see fullViewport): it starts again when the width changes (the device turned). */
+  private measureViewport(): void {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const width = Math.round(viewport.width * viewport.scale);
+    const height = viewport.height * viewport.scale;
+    const full = this.fullViewport;
+    if (width !== full.width) this.fullViewport = { width, height };
+    else full.height = Math.max(full.height, height);
+  }
+
+  /**
+   * Whether a soft keyboard is up: the visual viewport is well short of its
+   * full height (by more than a browser's bars, which come and go as it
+   * scrolls). Not the window's height, which some browsers shrink with it
+   * (Android's, laying the page out again). False where there is no visual
+   * viewport to tell.
+   */
+  private softKeyboardUp(): boolean {
+    const viewport = window.visualViewport;
+    if (!viewport) return false;
+    this.measureViewport();
+    return viewport.height * viewport.scale < this.fullViewport.height - SOFT_KEYBOARD_MIN_PX;
   }
 
   /** Whether text goes into `target` now, if keys go to it (see focus()). */
@@ -226,7 +243,7 @@ export class PanelKeyboard {
     if (document.activeElement === this.field) this.field.blur();
   }
 
-  private setSoftKeyboard(shown: boolean, tap = false): void {
+  private setSoftKeyboard(shown: boolean): void {
     if (shown === this.softKeyboard) return;
     this.softKeyboard = shown;
     const field = this.field;
@@ -243,7 +260,7 @@ export class PanelKeyboard {
     // when this runs for a tap (HtmlPanel.focusForTyping).
     if (document.activeElement === field) {
       field.blur();
-      this.focusField(tap);
+      this.focusField();
     }
   }
 
@@ -337,13 +354,13 @@ export class PanelKeyboard {
     if (frame) {
       // A panel took focus: give it back, to the hidden field while typing into
       // a panel, or else where focus was in the host.
-      if (this.target) this.focusField(false);
+      if (this.target) this.focusField();
       else if (this.lastHostFocus?.isConnected) this.lastHostFocus.focus({ preventScroll: true });
       // With nowhere to go, a sandboxed panel loses focus all the same. A
       // trusted one is left the hidden field, as before (the page's focus is
       // virtual anyway, see input/input.ts).
       else if (frame.sandboxed) (active as HTMLIFrameElement).blur();
-      else this.focusField(false);
+      else this.focusField();
       return;
     }
     if (!this.target || active === this.field) return;
@@ -351,7 +368,7 @@ export class PanelKeyboard {
       // Focus is in transit (a panel iframe in another process takes it
       // asynchronously), or the user clicked something that cannot be focused.
       // Neither ends editing; pressing outside the panels in the scene does.
-      if (document.hasFocus()) this.focusField(false);
+      if (document.hasFocus()) this.focusField();
       return;
     }
     if (document.hasFocus()) {
