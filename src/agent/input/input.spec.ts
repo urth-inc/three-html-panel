@@ -181,11 +181,26 @@ describe("text editing", () => {
       hit = target;
       input.handle({ type: "pointer", kind: "move", x: 1, y: 1 });
     };
+    // jsdom has no isContentEditable.
+    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.closest("[contenteditable=true]") !== null;
+      },
+    });
     try {
       hover(go);
       expect(input.cursor).toBe("pointer");
       hover(text);
       expect(input.cursor).toBe("default");
+      // A link's cursor is computed as "auto" in WebKit, its hand chosen natively.
+      document.body.innerHTML = `<a href="#x" style="cursor: auto"><span id="link">link</span></a><a id="plain" style="cursor: auto">no href</a><div contenteditable="true"><a id="edited" href="#y" style="cursor: auto">edit</a></div>`;
+      hover(document.querySelector("#link"));
+      expect(input.cursor).toBe("pointer");
+      hover(document.querySelector("#plain"));
+      expect(input.cursor).toBe("default");
+      hover(document.querySelector("#edited"));
+      expect(input.cursor).toBe("text");
       document.body.innerHTML = `<textarea></textarea>`;
       hover(document.querySelector("textarea"));
       expect(input.cursor).toBe("text");
@@ -193,6 +208,7 @@ describe("text editing", () => {
       expect(input.cursor).toBe("");
     } finally {
       delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
       vi.unstubAllGlobals();
     }
   });
