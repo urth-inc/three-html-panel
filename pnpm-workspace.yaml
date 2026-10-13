@@ -2,6 +2,7 @@
 # examples/sites/ are served by vite.panels.config.ts).
 packages:
   - "examples/sites/*"
+  - "examples/live-demo"
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
   vite-plus: 1.1.0

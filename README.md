@@ -142,6 +142,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 pnpm install
 pnpm dev        # the demo: open http://localhost:5173 (its pages are served from :5174, another origin)
 pnpm dev:all    # the demo and the example sites it also shows (each on its own origin, :5175-5178)
+pnpm dev:live-demo  # the live demo (http://localhost:5179) and the example sites, with the published package
 pnpm test       # unit tests
 pnpm e2e        # Chromium, Firefox and WebKit (Playwright); install them once: pnpm exec playwright install
 pnpm pack:lib   # the npm package, into lib/
@@ -151,7 +152,7 @@ vp check        # format, lint and types
 
 `pnpm e2e` starts `pnpm dev`, or uses one already running at its origins. For other ports, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`) in the environment: the tests do not read `.env` files. `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
-The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use, such as `article`, a long page with sticky and fixed elements, and `boxes`), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use, such as `article`, a long page with sticky and fixed elements, and `boxes`), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). These four sites and `examples/live-demo/`, the live demo that shows them one at a time, use the published package from npm, not `src/`. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
 
 ## License
 

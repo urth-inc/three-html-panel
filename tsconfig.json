@@ -21,6 +21,7 @@
     "vite.panels.config.ts",
     "playwright.config.ts"
   ],
-  // The example sites that are packages check their own code (their own tsconfig).
-  "exclude": ["examples/sites/*/src"]
+  // The example sites check their own code (their own tsconfig), and the live
+  // demo all of it: its Vite config uses its own vite, not the root's.
+  "exclude": ["examples/sites/*/src", "examples/live-demo"]
 }

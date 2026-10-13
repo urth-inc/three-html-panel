@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="three-html-panel live demo: real web sites, built with different frameworks, running as interactive panels in a three.js scene."
+    />
+    <title>three-html-panel live demo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1d2129;
+        font-family: system-ui, sans-serif;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+      #hud {
+        position: fixed;
+        left: 16px;
+        top: 14px;
+        max-width: calc(100% - 260px);
+        color: #c9d1dc;
+        font-size: 13px;
+        line-height: 1.6;
+        pointer-events: none;
+      }
+      #hud strong {
+        color: #fff;
+      }
+      #hud a {
+        color: #8ab4ff;
+        pointer-events: auto;
+      }
+      /* On a narrow screen, only the name and the links: the rest would cover the view. */
+      @media (max-width: 760px) {
+        #hud .more {
+          display: none;
+        }
+      }
+      /* The view mode, top right. */
+      #view {
+        position: fixed;
+        top: 12px;
+        right: 16px;
+        display: flex;
+        padding: 3px;
+        border-radius: 999px;
+        background: rgb(20 24 31 / 80%);
+      }
+      #view button {
+        padding: 6px 12px;
+        border: 0;
+        border-radius: 999px;
+        background: none;
+        color: #c9d1dc;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #view button[aria-pressed="true"] {
+        background: #3b4556;
+        color: #fff;
+      }
+      /* The stick to move with, bottom left: a ring with a knob. */
+      #stick {
+        position: fixed;
+        left: 24px;
+        bottom: 24px;
+        width: 112px;
+        height: 112px;
+        border: 2px solid rgb(255 255 255 / 25%);
+        border-radius: 50%;
+        background: rgb(20 24 31 / 45%);
+        touch-action: none;
+        cursor: grab;
+      }
+      #stick > span {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 48px;
+        height: 48px;
+        margin: -24px 0 0 -24px;
+        border-radius: 50%;
+        background: rgb(255 255 255 / 55%);
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <strong>three-html-panel</strong>
+      <span class="more"
+        >— web sites from other origins, running in iframes and drawn as textures in a three.js
+        scene. Choose one on the panel to the left.<br />
+        Move with WASD or the stick · drag outside the panels to look around · V switches orbit and
+        first person · wheel or drag a finger over a panel to scroll it · in VR, point and pull the
+        trigger</span
+      >
+      ·
+      <a href="https://github.com/urth-inc/three-html-panel" target="_blank" rel="noopener"
+        >GitHub</a
+      >
+      ·
+      <a href="https://www.npmjs.com/package/@urth/three-html-panel" target="_blank" rel="noopener"
+        >npm</a
+      >
+    </div>
+    <div id="view" role="group" aria-label="View">
+      <button type="button" value="orbit">Orbit</button>
+      <button type="button" value="first-person">First person</button>
+    </div>
+    <div id="stick" aria-label="Move" role="application"><span></span></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

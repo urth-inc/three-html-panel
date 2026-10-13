@@ -61,7 +61,10 @@
     "dev:sites": "pnpm --parallel --filter \"./examples/sites/*\" dev",
     "build:sites": "pnpm --filter \"./examples/sites/*\" build",
     "build:deploy": "vp build --mode deploy && pnpm --filter \"./examples/sites/*\" run build --mode deploy",
-    "typecheck:sites": "pnpm --filter \"./examples/sites/*\" --if-present typecheck"
+    "typecheck:sites": "pnpm --filter \"./examples/sites/*\" --if-present typecheck",
+    "dev:live-demo": "VITE_HOST_ORIGIN=http://localhost:5179 pnpm --parallel --filter \"./examples/sites/*\" --filter ./examples/live-demo dev",
+    "build:live-demo": "pnpm --filter ./examples/live-demo build",
+    "typecheck:live-demo": "pnpm --filter ./examples/live-demo typecheck"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

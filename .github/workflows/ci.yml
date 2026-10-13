@@ -35,6 +35,9 @@ jobs:
       # (vue-tsc, tsc, svelte-check) and builds.
       - run: vp run typecheck:sites
       - run: vp run build:sites
+      # The live demo, a package of its own that uses the published package.
+      - run: vp run typecheck:live-demo
+      - run: vp run build:live-demo
 
   # The demo's panel pages driven in real browsers (playwright.config.ts): what
   # jsdom cannot show, such as what is drawn, the caret and the selection.

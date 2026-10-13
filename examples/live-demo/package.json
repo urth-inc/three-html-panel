@@ -1,0 +1,24 @@
+{
+  "name": "example-live-demo",
+  "private": true,
+  "description": "The live demo: the example sites in a 3D scene, one at a time, chosen on a panel",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "build:deploy": "vp build --mode deploy",
+    "preview": "vp preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@urth/three-html-panel": "0.2.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/three": "0.186.0",
+    "typescript": "6.0.3",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
