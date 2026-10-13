@@ -458,7 +458,7 @@ describe("the panel's iframe", () => {
         expect(panel.focusForTyping(new Vector2(0.9, 0.1))).toBe(false);
         expect(focus).not.toHaveBeenCalled();
         expect(panel.focusForTyping(new Vector2(0.05, 0.98))).toBe(true);
-        expect(focus).toHaveBeenCalledWith(panel, true);
+        expect(focus).toHaveBeenCalledWith(panel, true, { tap: true });
         port.close();
       });
 

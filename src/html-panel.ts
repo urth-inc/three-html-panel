@@ -307,7 +307,7 @@ export class HtmlPanel
         this.editables = [];
         this.pointersSent = 0;
         this.tapAnswerAt = null;
-        this.setEditing(false, null);
+        this.setEditing(false, null, false);
         this.setCursor("default");
         // A new document starts shown.
         if (!this.shown) this.send({ type: "visibility", visible: false });
@@ -329,7 +329,7 @@ export class HtmlPanel
       onMessage: (data) => options.onMessage?.(data),
       onError: (error) => {
         this.renderer.clear();
-        this.setEditing(false, null);
+        this.setEditing(false, null, false);
         this.onError(error);
       },
     });
@@ -466,7 +466,7 @@ export class HtmlPanel
   }
 
   /** `typing`: text goes in (a text field or an editable has focus), not only keys (a button). */
-  private setEditing(editing: boolean, caret: Caret | null, typing = false): void {
+  private setEditing(editing: boolean, caret: Caret | null, typing: boolean): void {
     if (editing && !this.editing && !this.mayTakeKeyboard()) {
       // A sandboxed page focused a field on its own (or says it did: the page
       // runs the agent and can send anything). It must not take the keys the
@@ -663,7 +663,7 @@ export class HtmlPanel
       return false;
     }
     this.userActionUntil = performance.now() + USER_ACTION_MS;
-    this.keyboard.focus(this, true);
+    this.keyboard.focus(this, true, { tap: true });
     // The tap's release went out before this touchend: its answer has counted it.
     this.tapAnswerAt = this.pointersSent;
     window.clearTimeout(this.keyboardTimer);

@@ -166,6 +166,7 @@ describe("soft keyboards", () => {
     expect(field().hasAttribute("inputmode")).toBe(false);
     expect(focus).toHaveBeenCalled();
     expect(document.activeElement).toBe(field());
+    focus.mockRestore();
 
     keyboard.setTyping(target, false);
     expect(field().getAttribute("inputmode")).toBe("none");
@@ -173,6 +174,28 @@ describe("soft keyboards", () => {
     expect(field().hasAttribute("inputmode")).toBe(false);
     keyboard.release(target);
     expect(field().getAttribute("inputmode")).toBe("none");
+  });
+
+  it("opens again for a tap on a text field, after the user closed it", () => {
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {},
+    };
+    keyboard.focus(target, true);
+    const focus = vi.spyOn(field(), "focus");
+    // A report of the same field: nothing to open.
+    keyboard.focus(target, true);
+    expect(focus).not.toHaveBeenCalled();
+    // A tap on it: the field is focused again, which opens a closed soft keyboard.
+    keyboard.focus(target, true, { tap: true });
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(field());
+    focus.mockRestore();
+    keyboard.release(target);
   });
 
   it("turns Backspace and Enter that only show in beforeinput into keys", () => {

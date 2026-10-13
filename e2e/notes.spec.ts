@@ -14,6 +14,35 @@ test.beforeEach(async ({ page }) => {
 /** The notes come after the hint in the board: the second note is the board's third child. */
 const NOTE = ".board-inner > .note:nth-child(3)";
 
+test("lets a soft keyboard show only while a text field has focus", async ({ page }) => {
+  // The host's hidden field (PanelKeyboard): focused, and whether a soft keyboard may show.
+  const field = () =>
+    page.evaluate(() => {
+      const field = document.querySelector("textarea[aria-hidden]")!;
+      return {
+        focused: document.activeElement === field,
+        inputmode: field.getAttribute("inputmode"),
+      };
+    });
+  const dot = await panel.at(`${NOTE} .dot`);
+  // A button: its keys go to the page, but no soft keyboard.
+  await panel.focus(dot);
+  expect(await field()).toEqual({ focused: true, inputmode: "none" });
+  await panel.focus(await panel.at(`${NOTE} textarea`, 0.8, 0.8));
+  await expect.poll(field).toEqual({ focused: true, inputmode: null });
+  await page.keyboard.type("typed here");
+  await expect
+    .poll(() =>
+      panel.frame.evaluate(
+        (note) => document.querySelector<HTMLTextAreaElement>(`${note} textarea`)!.value,
+        NOTE,
+      ),
+    )
+    .toContain("typed here");
+  await panel.focus(dot);
+  await expect.poll(field).toEqual({ focused: true, inputmode: "none" });
+});
+
 test("takes typing in a note", async ({ page }) => {
   await panel.focus(await panel.at(`${NOTE} textarea`, 0.8, 0.8));
   await page.keyboard.type("typed here");
