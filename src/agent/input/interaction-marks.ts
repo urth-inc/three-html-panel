@@ -17,6 +17,7 @@ import {
   FOCUS_WITHIN_ATTRIBUTE,
   HOVER_ATTRIBUTE,
 } from "../capture/css";
+import { flatParent } from "../flat-tree";
 
 export interface InteractionState {
   hovered: Iterable<Element>;
@@ -48,7 +49,7 @@ export class InteractionMarks {
     beforeChange: (changed: Element[]) => void = () => {},
   ): Element[] {
     const focusWithin: Element[] = [];
-    for (let element = focused; element; element = element.parentElement) focusWithin.push(element);
+    for (let element = focused; element; element = flatParent(element)) focusWithin.push(element);
     const changes: { name: string; add: Element[]; remove: Element[]; next: Set<Element> }[] = [];
     const changed = new Set<Element>();
     for (const [name, elements] of [

@@ -34,6 +34,7 @@ import {
   type Composition,
   type TextField,
 } from "./caret";
+import { closestInFlatTree, deepElementFromPoint, flatParent } from "../flat-tree";
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
@@ -137,15 +138,16 @@ function scrollByUser(element: Element, left: number, top: number): void {
   element.scrollBy({ left, top, behavior: "instant" });
 }
 
+/** An element and its ancestors, in the flat tree (a press in a shadow root is in its host too). */
 function ancestors(element: Element | null): Element[] {
   const chain: Element[] = [];
-  for (let node = element; node; node = node.parentElement) chain.push(node);
+  for (let node = element; node; node = flatParent(node)) chain.push(node);
   return chain;
 }
 
 function commonAncestor(a: Element, b: Element): Element | null {
   const chain = new Set(ancestors(a));
-  for (let node: Element | null = b; node; node = node.parentElement)
+  for (let node: Element | null = b; node; node = flatParent(node))
     if (chain.has(node)) return node;
   return null;
 }
@@ -634,7 +636,7 @@ export class InputSynthesizer {
     if (isTextField(target) || editable) return "text";
     // WebKit leaves links at "auto" and picks the hand cursor natively, where
     // Chromium and Firefox compute "pointer": the hand is picked here the same way.
-    if (target.closest(":any-link")) return "pointer";
+    if (closestInFlatTree(target, ":any-link")) return "pointer";
     return this.#pointer && this.#isOverText(this.#pointer.x, this.#pointer.y) ? "text" : "default";
   }
 
@@ -768,7 +770,10 @@ export class InputSynthesizer {
     const host = editingHostOf(target);
     // Pressing a <label> focuses its control.
     const focusable =
-      host ?? target.closest(FOCUSABLE_SELECTOR) ?? target.closest("label")?.control ?? null;
+      host ??
+      closestInFlatTree(target, FOCUSABLE_SELECTOR) ??
+      (closestInFlatTree(target, "label") as HTMLLabelElement | null)?.control ??
+      null;
     if (focusable && this.#focus.isFocusable(focusable)) {
       const wasFocused = this.#focus.current === focusable;
       this.#focus.set(focusable);
@@ -899,8 +904,9 @@ export class InputSynthesizer {
 
   // --- Pointer ---------------------------------------------------------------
 
+  /** What is drawn at a point: inside a shadow root, not its host (which is all elementFromPoint() sees). */
   #hitTest(x: number, y: number): Element {
-    return this.#document.elementFromPoint(x, y) ?? this.#document.documentElement;
+    return deepElementFromPoint(this.#document, x, y) ?? this.#document.documentElement;
   }
 
   #pointerInit(

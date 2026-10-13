@@ -8,6 +8,7 @@
 // the geometry computed here.
 
 import type { Box } from "../../types";
+import { deepElementFromPoint, flatParent } from "../flat-tree";
 
 export type Axis = "x" | "y";
 
@@ -184,7 +185,7 @@ export function hitBox(bar: Scrollbar, box: Box): Box {
 /** The innermost scrollbar under a point, if any. */
 export function scrollbarAt(document: Document, x: number, y: number): Scrollbar | null {
   const chain: Element[] = [];
-  for (let node = document.elementFromPoint(x, y); node; node = node.parentElement)
+  for (let node = deepElementFromPoint(document, x, y); node; node = flatParent(node))
     chain.push(node);
   const root = document.scrollingElement;
   if (root && !chain.includes(root)) chain.push(root);
