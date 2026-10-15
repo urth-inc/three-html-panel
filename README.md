@@ -24,7 +24,7 @@ Show existing web pages — scripts included, from any origin — as interactive
                                    MessagePort
 ```
 
-The page runs in an `<iframe>` and loads a small script, the **agent**. The agent copies the page into an SVG `<foreignObject>`, which the host draws into a texture, and replays the host's input in the page as DOM events. The host never reads the page's document.
+The page runs in an `<iframe>` and loads a small script, the **agent**. The agent copies the page into an SVG `<foreignObject>`, which the host draws into a texture, and replays the host's input in the page as DOM events.
 
 ## Install
 
@@ -69,7 +69,7 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 | `pauseWhenHidden` | `true`            | Pause capturing, then rest, while not drawn (see Performance) |
 | `optimizeHover`   | `true`            | Skip captures for unchanged hover (see Performance)           |
 | `readyTimeout`    | 15000             | ms to wait for the agent before `onError`                     |
-| `onLink`          | open in a new tab | A link the user followed in the page                          |
+| `onLink`          | open in a new tab | A link the user followed (http(s), right after acting on it)  |
 | `onMessage`       |                   | Data the page sent with `sendToHost()`                        |
 | `onError`         | `console.warn`    | The agent did not connect, or speaks another protocol         |
 
@@ -112,10 +112,6 @@ new HtmlPanel({
 panel.postMessage("scene-click");
 ```
 
-### Links
-
-A link the user follows opens in a new tab of the host (only http(s), only right after the user acted on the panel). Pass `onLink` to handle it yourself.
-
 ## Security
 
 Loading the agent is how a page consents to being shown: the agent sends the host what the page shows, much as if the page posted its own DOM to the host, and only to the origin named in `data-host-origin` (`hostOrigin`). Name a fixed origin you trust, never one taken from the URL. The host cannot read a page that does not load the agent, and the agent reads only what the page's own scripts can (cross-origin images and stylesheets need CORS, cross-origin frames are left out). A page that is not sandboxed may show the user's own data (with third-party cookies, a logged-in view); the named host receives that too.
@@ -134,21 +130,24 @@ Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow
 - A panel not drawn facing the camera for a second (out of view, behind, hidden) stops capturing; a panel drawn small captures at most 5 times a second.
 - A panel not drawn for 10 seconds rests: its iframe is moved off screen and made invisible, so the browser stops painting the page (which keeps running, and keeps its state), and the panel lets go of its canvas and texture. Drawn again, it draws the last frame again, showing its `background` for a moment.
 - Images more than a viewport away from the page's viewport are not embedded in frames, nor fetched: a transparent image of their size stands in, so the layout is the same.
-- The texture's resolution follows how large the panel is drawn, down to a quarter of `pixelRatio`.
-
-`optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Changes through the CSSOM methods (`insertRule`, `replaceSync`, ...) trigger captures too. Set `optimizeHover: false` for pages that draw to canvas, edit CSS rules' declarations in place (`rule.style`), or update other visual state without DOM mutations in pointer handlers. This restores capture invalidation on every pointer move, including after reloads and navigation.
 
 These rely on the scene being rendered every frame. Without WebGL (a panel that takes input but is never drawn), pass `pauseWhenHidden: false`.
 
+Each new frame is rasterized into the panel's texture and uploaded, at `width` × `height` × `pixelRatio`² pixels (at most 4096 on a side). Fewer pixels make every update cheaper, and take less memory (with mipmaps, a 1024×720 panel at `pixelRatio` 2 holds about 16 MB; at 1, about 4 MB):
+
+- **Lay the page out at a smaller `width` and `height`**, keeping `size`: the panel is as large in the scene, and its text and controls are larger in it. 512×360 has a quarter of the pixels of 1024×720. Design the page for that viewport, with fewer, larger elements: a smaller DOM is also quicker to capture.
+- **Lower `pixelRatio`** where the panel is not seen up close: 1 has a quarter of the pixels of the default 2. It is a ceiling: the texture's resolution follows how large the panel is drawn, down to a quarter of it, so a lower `pixelRatio` saves most while the panel is near. Enough is about the device pixels the panel covers on screen, divided by `width`: on a headset with about 25 pixels per degree, a panel 1 m wide seen from 1.5 m covers about 37°, some 920 pixels, which a 480 px wide page needs `pixelRatio` 2 for; from 2.5 m, about 1.2 is enough.
+
+`optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Changes through the CSSOM methods (`insertRule`, `replaceSync`, ...) trigger captures too. Set `optimizeHover: false` for pages that draw to canvas, edit CSS rules' declarations in place (`rule.style`), or update other visual state without DOM mutations in pointer handlers.
+
 ## Limitations
 
-- The page has to load the agent.
 - Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end. `backdrop-filter` is not drawn: browsers do not apply it in the SVG images panels are drawn from.
 - Open popovers and modal dialogs (the top layer) are drawn over the page, moved out of their parents in the copy. There, rules that look at the `<body>`'s siblings (`body:first-of-type`), or at more than 16 later siblings of the element or of one of its parents (`:nth-last-child`, `:has(~ …)`), may not match as on the page.
 - A cross-origin video without CORS shows only its poster.
 - Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). For bare text, wrapping it in an element avoids this.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
-- The panel page never gets a real pointer or real focus, so the agent keeps hover, press and focus itself. It marks the elements (`data-thp-hover`, `data-thp-active`, `data-thp-focus`, `data-thp-focus-visible`, `data-thp-focus-within`) and rewrites the page's `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within` selectors (and `:popover-open` and `:modal`, for the copy) in place to match the marks too (`.row:hover` becomes `.row:is(:hover,[data-thp-hover])`), so that the page lays out as the panel shows it and a press lands on what is drawn. Its selector queries (`matches`, `closest`, `querySelector(All)`) are rewritten the same way, so its scripts see the states too, and the transitions these states start end at once, as the panel draws them. The page's script can see the marks and the rewritten selectors, and the wrapped methods: the selector queries, and the CSSOM methods and setters that change stylesheets (`insertRule`, `replace`, `selectorText`, `disabled`, `adoptedStyleSheets`, ...). The stylesheets of shadow roots are not rewritten. The interaction rules of a cross-origin stylesheet loaded without CORS come after the page's own.
+- The panel page never gets a real pointer or real focus, so the agent keeps hover, press and focus itself: it marks the elements (`data-thp-hover`, `data-thp-active`, `data-thp-focus`, `data-thp-focus-visible`, `data-thp-focus-within`) and rewrites the page's `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within` selectors (and `:popover-open` and `:modal`, for the copy) in place to match the marks too (`.row:hover` becomes `.row:is(:hover,[data-thp-hover])`), so that the page lays out as the panel shows it and a press lands on what is drawn. The page's scripts see the marks and the rewritten selectors, in its stylesheets and in its selector queries (`matches`, `closest`, `querySelector(All)`, wrapped to match them), and the wrapped CSSOM methods and setters that change stylesheets (`insertRule`, `replace`, `selectorText`, `disabled`, `adoptedStyleSheets`, ...). The stylesheets of shadow roots are not rewritten. The interaction rules of a cross-origin stylesheet loaded without CORS come after the page's own.
 - No IME in VR. Touch and VR were tested in emulation, not on devices.
 - A same-site page shares the host's main thread; a heavy one slows the scene. Prefer another site for panel pages.
 
@@ -168,8 +167,4 @@ vp check        # format, lint and types
 
 `pnpm e2e` starts `pnpm dev`, or uses one already running at its origins. For other ports, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`) in the environment: the tests do not read `.env` files. `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
-The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use, such as `article`, a long page with sticky and fixed elements, and `boxes`), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). These four sites and `examples/live-demo/`, the live demo that shows them one at a time, use the published package from npm, not `src/`. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
-
-## License
-
-MIT
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels. `notes`, `controls` and `reader` are served from the other origin, with a few pages only the end-to-end tests use (such as `article`, a long page with sticky and fixed elements, and `boxes`). Four sites are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`); they and `examples/live-demo/`, the live demo that shows them one at a time, use the published package from npm, not `src/`. The end-to-end tests drive these pages in `e2e/harness/`, a scene with one flat panel.
