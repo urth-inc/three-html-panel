@@ -118,6 +118,8 @@ A link the user follows opens in a new tab of the host (only http(s), only right
 
 ## Security
 
+Loading the agent is how a page consents to being shown: the agent sends the host what the page shows, much as if the page posted its own DOM to the host, and only to the origin named in `data-host-origin` (`hostOrigin`). Name a fixed origin you trust, never one taken from the URL. The host cannot read a page that does not load the agent, and the agent reads only what the page's own scripts can (cross-origin images and stylesheets need CORS, cross-origin frames are left out). A page that is not sandboxed may show the user's own data (with third-party cookies, a logged-in view); the named host receives that too.
+
 **`sandbox: false`** runs the page as an ordinary page of its origin. Use it only for pages you trust: a page on the host's origin can read the host's cookies and storage.
 
 **`sandbox: true`** is for pages you do not trust. The iframe gets `sandbox="allow-scripts allow-forms allow-popups"` (never `allow-same-origin`), so the page runs on an opaque origin and cannot reach the host's cookies, storage or document. It cannot take the keyboard either: the host gives focus back, and lets a text field have the keys only right after the user pressed it.
