@@ -156,7 +156,6 @@ Each new frame is rasterized into the panel's texture and uploaded, at `width` Ã
 ```bash
 pnpm install
 pnpm dev        # the demo: open http://localhost:5173 (its pages are served from :5174, another origin)
-pnpm dev:all    # the demo and the example sites it also shows (each on its own origin, :5175-5178)
 pnpm dev:live-demo  # the live demo (http://localhost:5179) and the example sites, with the published package
 pnpm test       # unit tests
 pnpm e2e        # Chromium, Firefox and WebKit (Playwright); install them once: pnpm exec playwright install
@@ -165,4 +164,4 @@ pnpm build      # the demo, into dist/
 vp check        # format, lint and types
 ```
 
-`src/` is the library (`src/agent/` runs in panel pages). `examples/showcase/` is the demo scene and `examples/sites/` its pages; the sites with a `package.json` and `examples/live-demo/` use the published package, not `src/`. Other ports: set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`).
+`src/` is the library (`src/agent/` runs in panel pages). `examples/showcase/` is the demo scene; it shows the pages in `examples/sites/` that run `src/`. The sites there with a `package.json` use the published package instead, and only `examples/live-demo/` shows them. Other ports: set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`).

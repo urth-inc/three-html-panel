@@ -19,7 +19,6 @@ import {
   originsFor,
   panelServerConfig,
 } from "./vite.panels.config.ts";
-import { siteOrigins } from "./examples/sites/vite.site.ts";
 
 type PanelServer = ViteDevServer | PreviewServer;
 
@@ -153,8 +152,6 @@ export default defineConfig(({ mode }) => {
     define: {
       "import.meta.env.VITE_HOST_ORIGIN": JSON.stringify(origins.host),
       "import.meta.env.VITE_PANEL_ORIGIN": JSON.stringify(origins.panel),
-      // The example sites that are packages of their own, each on its own origin.
-      "import.meta.env.VITE_SITE_ORIGINS": JSON.stringify(siteOrigins(mode)),
     },
     plugins: lazyPlugins(() => [
       panelServer(),

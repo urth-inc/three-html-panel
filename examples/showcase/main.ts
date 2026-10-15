@@ -65,10 +65,6 @@ function onRing(panel: HtmlPanel, degrees: number, height = EYE_HEIGHT): HtmlPan
 // vite.config.ts); without one, next to the scene.
 const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href;
 const pageUrl = (path: string) => new URL(path, panelBase);
-// The example sites that are packages of their own, each on its own origin
-// (examples/sites/vite.site.ts; `pnpm dev:all` starts them with the scene).
-const siteOrigins = import.meta.env.VITE_SITE_ORIGINS as Record<string, string>;
-const siteUrl = (name: string) => new URL("/", siteOrigins[name]);
 
 // All pages run sandboxed (the iframes' sandbox attribute; the server of the
 // demo's own panel pages sends the same sandbox too, see vite.panels.config.ts):
@@ -89,17 +85,6 @@ interface PanelSpec {
   degrees: number;
   create: () => HtmlPanel;
 }
-
-// The sites built with frameworks (and one with none).
-const sitePanel = (name: string) =>
-  new HtmlPanel({
-    url: siteUrl(name),
-    width: 1024,
-    height: 720,
-    size: 1.7,
-    sandbox: true,
-    onLink: openLink,
-  });
 
 const specs: PanelSpec[] = [
   {
@@ -146,17 +131,9 @@ const specs: PanelSpec[] = [
         onLink: openLink,
       }),
   },
-  // Web platform features, no framework.
-  { name: "web-standards", degrees: -66, create: () => sitePanel("web-standards") },
-  // A Hacker News reader (Vue + Vuetify).
-  { name: "hn-reader", degrees: -106, create: () => sitePanel("hn-reader") },
-  // A chat app with rich text (React + Mantine).
-  { name: "chat", degrees: 62, create: () => sitePanel("chat") },
-  // A photo gallery and editor (Svelte).
-  { name: "gallery", degrees: 102, create: () => sitePanel("gallery") },
 ];
 
-// ?site=<name> shows that page alone, straight ahead (e.g. ?site=web-standards).
+// ?site=<name> shows that page alone, straight ahead (e.g. ?site=reader).
 const only = new URLSearchParams(location.search).get("site");
 const chosen = specs.filter((spec) => spec.name === only);
 if (only && chosen.length === 0) {
