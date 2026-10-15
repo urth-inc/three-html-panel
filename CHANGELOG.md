@@ -4,6 +4,12 @@ Changes to the `@urth/three-html-panel` package. Changes to the demo and example
 
 Each version's section is also the release notes of its [GitHub Release](https://github.com/urth-inc/three-html-panel/releases), made when its tag is pushed.
 
+## Unreleased
+
+### Fixed
+
+- Sliders (`<input type="range">`) move: a press sets the value where it lands, a drag follows the pointer (a finger or controller drag moves the thumb rather than scrolling), and once focused, the arrows, Page Up/Down, Home and End step it. The page gets `input` as the value changes and `change` when it is committed. Before, synthetic presses and keys left a slider where it was in Chromium and Firefox; in WebKit, a press moved it but a drag did not.
+
 ## 0.2.5 - 2026-10-13
 
 ### Fixed
