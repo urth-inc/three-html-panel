@@ -68,7 +68,7 @@ fieldset label {
   display: grid;
   gap: 6px;
 }
-.field input {
+.field input:not([type="range"]) {
   padding: 9px 11px;
   border: 1px solid #3a475d;
   border-radius: 6px;
@@ -76,7 +76,14 @@ fieldset label {
   color: #fff;
   font: inherit;
 }
-.field input:focus {
+.field input[type="range"] {
+  margin: 0;
+  accent-color: #60a5fa;
+}
+.field output {
+  color: #fde68a;
+}
+.field input:not([type="range"]):focus {
   border-color: #60a5fa;
   outline: 2px solid rgb(96 165 250 / 35%);
 }
