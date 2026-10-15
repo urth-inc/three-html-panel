@@ -398,12 +398,9 @@ export class PageCapture {
   /** Animations copied as they are now (see collectAnimatedValues in snapshot.ts); the others end on a fixed value. */
   #hasLiveAnimations(): boolean {
     const document = this.#document;
-    return (
-      typeof document.getAnimations === "function" &&
-      document
-        .getAnimations()
-        .some((animation) => animation.playState === "running" && isSampledLive(animation))
-    );
+    return document
+      .getAnimations()
+      .some((animation) => animation.playState === "running" && isSampledLive(animation));
   }
 
   #render(): void {

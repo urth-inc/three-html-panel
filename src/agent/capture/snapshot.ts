@@ -234,11 +234,9 @@ export function isSampledLive(animation: Animation): boolean {
  */
 function collectAnimatedValues(document: Document): Map<Element, Map<string, string | null>> {
   const result = new Map<Element, Map<string, string | null>>();
-  if (typeof document.getAnimations !== "function") return result;
   for (const animation of document.getAnimations()) {
     const effect = animation.effect as KeyframeEffect | null;
-    if (!effect?.target || effect.pseudoElement || typeof effect.getKeyframes !== "function")
-      continue;
+    if (!effect?.target || effect.pseudoElement) continue;
     if (isTransition(animation)) continue;
     let values = result.get(effect.target);
     if (!values) result.set(effect.target, (values = new Map()));
