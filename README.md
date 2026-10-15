@@ -34,7 +34,7 @@ npm install @urth/three-html-panel three
 
 three r158 or later (with `@types/three` 0.158 or later for TypeScript).
 
-The agent adds about 35 kB (gzip) to each panel page.
+The agent adds about 38 kB (gzip) to each panel page.
 
 ## Usage
 

@@ -4,7 +4,16 @@ Changes to the `@urth/three-html-panel` package. Changes to the demo and example
 
 Each version's section is also the release notes of its [GitHub Release](https://github.com/urth-inc/three-html-panel/releases), made when its tag is pushed.
 
-## Unreleased
+## 0.2.6 - 2026-10-15
+
+### Added
+
+- `WebGPURenderer` (`three/webgpu`) as the scene's renderer, as well as `WebGLRenderer`. `PanelXRPointer` takes an `XRRenderer` (what it uses of a renderer: its XR manager), now exported, which both fit ([#90](https://github.com/urth-inc/three-html-panel/pull/90)).
+
+### Changed
+
+- Less memory: a panel not drawn for 10 seconds rests. Its iframe is moved off screen and made invisible, so the browser stops painting the page (which keeps running, and keeps its state), and the panel lets go of its canvas and texture; drawn again, it draws its last frame again. Images more than a viewport away from the page's viewport are not embedded in frames, nor fetched: a transparent image of their size stands in, so the layout is the same ([#87](https://github.com/urth-inc/three-html-panel/pull/87)).
+- The agent calls `getAnimations()`, `getKeyframes()` and `Intl.Segmenter`, which every supported browser has, without checking for them first ([#90](https://github.com/urth-inc/three-html-panel/pull/90)).
 
 ### Fixed
 
