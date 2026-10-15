@@ -64,7 +64,7 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 | `sandbox`         | `false`           | Run the page sandboxed (see Security)                         |
 | `pixelRatio`      | 2 (1 on phones)   | Texture pixels per CSS pixel, at most                         |
 | `background`      | `#ffffff`         | Painted under transparent pages                               |
-| `pauseWhenHidden` | `true`            | Stop capturing while the panel is not drawn (see Performance) |
+| `pauseWhenHidden` | `true`            | Pause capturing, then rest, while not drawn (see Performance) |
 | `optimizeHover`   | `true`            | Skip captures for unchanged hover (see Performance)           |
 | `readyTimeout`    | 15000             | ms to wait for the agent before `onError`                     |
 | `onLink`          | open in a new tab | A link the user followed in the page                          |
@@ -128,6 +128,8 @@ Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow
 
 - Only what changed is sent: the agent captures on DOM changes, input and animation, and skips frames that look the same.
 - A panel not drawn facing the camera for a second (out of view, behind, hidden) stops capturing; a panel drawn small captures at most 5 times a second.
+- A panel not drawn for 10 seconds rests: its iframe is moved off screen and made invisible, so the browser stops painting the page (which keeps running, and keeps its state), and the panel lets go of its canvas and texture. Drawn again, it draws the last frame again, showing its `background` for a moment.
+- Images more than a viewport away from the page's viewport are not embedded in frames, nor fetched: a transparent image of their size stands in, so the layout is the same.
 - The texture's resolution follows how large the panel is drawn, down to a quarter of `pixelRatio`.
 
 `optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Changes through the CSSOM methods (`insertRule`, `replaceSync`, ...) trigger captures too. Set `optimizeHover: false` for pages that draw to canvas, edit CSS rules' declarations in place (`rule.style`), or update other visual state without DOM mutations in pointer handlers. This restores capture invalidation on every pointer move, including after reloads and navigation.

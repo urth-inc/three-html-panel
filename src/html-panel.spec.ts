@@ -704,7 +704,7 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
-    it("rests after REST_AFTER_MS hidden: its iframe is not laid out and its canvas let go of, until it is drawn again", async () => {
+    it("rests after REST_AFTER_MS hidden: its iframe is not painted and its canvas let go of, until it is drawn again", async () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
@@ -714,12 +714,15 @@ describe("the panel's iframe", () => {
         "release",
       );
       vi.advanceTimersByTime(REST_AFTER_MS - 500);
-      expect(panel.iframe.style.display).toBe("");
+      expect(panel.iframe.style.visibility).toBe("");
       vi.advanceTimersByTime(1000);
-      expect(panel.iframe.style.display).toBe("none");
+      // Off screen and invisible, still laid out at its size (a page loaded meanwhile is not 0x0).
+      expect(panel.iframe.style.visibility).toBe("hidden");
+      expect(parseFloat(panel.iframe.style.left)).toBeLessThan(-1000);
+      expect(panel.iframe.style.display).toBe("");
       expect(release).toHaveBeenCalledTimes(1);
       panel.onBeforeRender(renderer, new Scene(), front);
-      expect(panel.iframe.style.display).toBe("");
+      expect([panel.iframe.style.left, panel.iframe.style.visibility]).toEqual(["0px", ""]);
       port.close();
     });
 
