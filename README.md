@@ -54,7 +54,9 @@ new PanelPointer(camera, renderer.domElement, () => [panel]);
 renderer.setAnimationLoop(() => renderer.render(scene, camera));
 ```
 
-For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `PanelXRKeyboard`: there is no system keyboard in an immersive session.
+`renderer` can be a `WebGLRenderer` or a `WebGPURenderer` (`three/webgpu`, tried with r186 on both its WebGPU and WebGL 2 backends).
+
+For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `PanelXRKeyboard`: there is no system keyboard in an immersive session. With a `WebGPURenderer`, VR on its WebGPU backend needs what three asks for there (a session with the `webgpu` feature); elsewhere, use its WebGL 2 backend (`forceWebGL: true`). VR with a `WebGPURenderer` has not been tried.
 
 | Option            | Default           | Meaning                                                       |
 | ----------------- | ----------------- | ------------------------------------------------------------- |

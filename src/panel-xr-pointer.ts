@@ -15,9 +15,19 @@
 //
 // Call update() once per frame, in the animation loop.
 
-import { Ray, Raycaster, Vector2, Vector3, type WebGLRenderer, type XRTargetRaySpace } from "three";
+import { Ray, Raycaster, Vector2, Vector3, type XRTargetRaySpace } from "three";
 import type { HtmlPanel } from "./html-panel";
 import type { PanelXRKeyboard } from "./panel-xr-keyboard";
+
+/** What the pointer uses of a renderer: its XR manager. WebGLRenderer and WebGPURenderer both fit. */
+export interface XRRenderer {
+  readonly xr: {
+    readonly isPresenting: boolean;
+    getController(index: number): XRTargetRaySpace;
+    addEventListener(type: "sessionend", listener: () => void): void;
+    removeEventListener(type: "sessionend", listener: () => void): void;
+  };
+}
 
 /** Thumbstick deflection below this is ignored (sticks rarely rest exactly at 0). */
 const STICK_DEAD_ZONE = 0.15;
@@ -42,7 +52,7 @@ export class PanelXRPointer {
   keyboard: PanelXRKeyboard | null = null;
 
   constructor(
-    private readonly renderer: WebGLRenderer,
+    private readonly renderer: XRRenderer,
     private readonly panels: () => readonly HtmlPanel[],
     controllerCount = 2,
   ) {
