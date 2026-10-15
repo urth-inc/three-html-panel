@@ -209,6 +209,34 @@ describe("FrameRenderer", () => {
     renderer.dispose();
   });
 
+  it("lets go of its canvas and texture while paused, and draws the last frame again at its size when resumed", async () => {
+    const decoded = stubImages();
+    const renderer = new FrameRenderer({
+      width: 800,
+      height: 600,
+      pixelRatio: 2,
+      background: "#fff",
+    });
+    const dispose = vi.spyOn(renderer.texture, "dispose");
+    renderer.submit({ svg: "<svg>page</svg>", width: 800, height: 600 });
+    await vi.waitFor(() => expect(decoded).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Not while shown.
+    renderer.release();
+    expect(renderer.canvas.width).toBe(1600);
+    renderer.setPaused(true);
+    renderer.release();
+    expect([renderer.canvas.width, renderer.canvas.height]).toEqual([0, 0]);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    // A resolution asked for meanwhile is the one it comes back at.
+    renderer.setResolution(1);
+    expect(renderer.canvas.width).toBe(0);
+    renderer.setPaused(false);
+    expect([renderer.canvas.width, renderer.canvas.height]).toEqual([800, 600]);
+    await vi.waitFor(() => expect(decoded).toEqual(["<svg>page</svg>", "<svg>page</svg>"]));
+    renderer.dispose();
+  });
+
   it("draws nothing again after being cleared, nor while paused", async () => {
     const decoded = stubImages();
     const renderer = new FrameRenderer({
