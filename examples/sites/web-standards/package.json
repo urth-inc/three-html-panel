@@ -9,7 +9,7 @@
     "preview": "vp preview"
   },
   "dependencies": {
-    "@urth/three-html-panel": "0.2.5"
+    "@urth/three-html-panel": "0.2.6"
   },
   "devDependencies": {
     "vite": "catalog:",
