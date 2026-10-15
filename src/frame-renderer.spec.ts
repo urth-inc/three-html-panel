@@ -1,6 +1,10 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { FrameRenderer, FrameScaler, probeScaling } from "./frame-renderer";
+import {
+  FrameRenderer,
+  FrameScaler,
+  probeScaling,
+  type FrameRendererOptions,
+} from "./frame-renderer";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -98,9 +102,13 @@ describe("FrameScaler", () => {
 });
 
 describe("FrameRenderer", () => {
-  /** Image stubbed: the SVGs it starts to decode, and a way to let each finish. */
-  const stubImages = () => {
+  /**
+   * Image stubbed: the SVGs it starts to decode, each loading (or with `fail`,
+   * failing) at once, or with `manual` when the next of `finish` is called.
+   */
+  const stubImages = ({ manual = false, fail = false } = {}) => {
     const decoded: string[] = [];
+    const finish: (() => void)[] = [];
     vi.stubGlobal(
       "Image",
       class {
@@ -109,9 +117,14 @@ describe("FrameRenderer", () => {
         onerror: (() => void) | null = null;
         set src(value: string) {
           const svg = decodeURIComponent(value.slice(value.indexOf(",") + 1));
-          // Not the probe the shared scaler decodes once (probeScaling).
-          if (!svg.includes("box-shadow")) decoded.push(svg);
-          queueMicrotask(() => this.onload?.());
+          const done = () => (fail ? this.onerror : this.onload)?.();
+          // The probe the shared scaler decodes once (probeScaling): loads at once, not counted.
+          if (svg.includes("box-shadow")) queueMicrotask(() => this.onload?.());
+          else {
+            decoded.push(svg);
+            if (manual) finish.push(done);
+            else queueMicrotask(done);
+          }
         }
       },
     );
@@ -121,22 +134,20 @@ describe("FrameRenderer", () => {
       drawImage: () => {},
       getImageData: () => ({ data: [255, 255, 255, 255] }),
     } as unknown as CanvasRenderingContext2D);
-    return decoded;
+    return { decoded, finish };
   };
+  const newRenderer = (options: Partial<FrameRendererOptions> = {}) =>
+    new FrameRenderer({ width: 800, height: 600, pixelRatio: 2, background: "#fff", ...options });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
   it("draws at a lower resolution when asked, never above its pixelRatio, and draws the last frame again", async () => {
-    const decoded = stubImages();
-    const renderer = new FrameRenderer({
-      width: 800,
-      height: 600,
-      pixelRatio: 2,
-      background: "#fff",
-    });
+    const { decoded } = stubImages();
+    const renderer = newRenderer();
     const dispose = vi.spyOn(renderer.texture, "dispose");
     expect([renderer.canvas.width, renderer.canvas.height]).toEqual([1600, 1200]);
     renderer.submit({ svg: "<svg>page</svg>", width: 800, height: 600 });
     await vi.waitFor(() => expect(decoded).toEqual(["<svg>page</svg>"]));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     renderer.setResolution(0.5);
     expect([renderer.canvas.width, renderer.canvas.height]).toEqual([400, 300]);
     // A texture keeps its size once uploaded: it is made again.
@@ -151,37 +162,8 @@ describe("FrameRenderer", () => {
   });
 
   it("draws the newer frame again, not the older one, when the resolution changes while it is being drawn", async () => {
-    const decoded: string[] = [];
-    const finish: (() => void)[] = [];
-    vi.stubGlobal(
-      "Image",
-      class {
-        decoding = "";
-        onload: (() => void) | null = null;
-        onerror: (() => void) | null = null;
-        set src(value: string) {
-          const svg = decodeURIComponent(value.slice(value.indexOf(",") + 1));
-          if (svg.includes("box-shadow")) queueMicrotask(() => this.onload?.());
-          else {
-            decoded.push(svg);
-            finish.push(() => this.onload?.());
-          }
-        }
-      },
-    );
-    vi.stubGlobal("createImageBitmap", undefined);
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
-      fillRect: () => {},
-      drawImage: () => {},
-      getImageData: () => ({ data: [255, 255, 255, 255] }),
-    } as unknown as CanvasRenderingContext2D);
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
-    const renderer = new FrameRenderer({
-      width: 800,
-      height: 600,
-      pixelRatio: 2,
-      background: "#fff",
-    });
+    const { decoded, finish } = stubImages({ manual: true });
+    const renderer = newRenderer();
     renderer.submit({ svg: "<svg>A</svg>", width: 800, height: 600 });
     finish.shift()!();
     await settle();
@@ -210,17 +192,12 @@ describe("FrameRenderer", () => {
   });
 
   it("lets go of its canvas and texture while paused, and draws the last frame again at its size when resumed", async () => {
-    const decoded = stubImages();
-    const renderer = new FrameRenderer({
-      width: 800,
-      height: 600,
-      pixelRatio: 2,
-      background: "#fff",
-    });
+    const { decoded } = stubImages();
+    const renderer = newRenderer();
     const dispose = vi.spyOn(renderer.texture, "dispose");
     renderer.submit({ svg: "<svg>page</svg>", width: 800, height: 600 });
     await vi.waitFor(() => expect(decoded).toHaveLength(1));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     // Not while shown.
     renderer.release();
     expect(renderer.canvas.width).toBe(1600);
@@ -238,60 +215,34 @@ describe("FrameRenderer", () => {
   });
 
   it("draws nothing again after being cleared, nor while paused", async () => {
-    const decoded = stubImages();
-    const renderer = new FrameRenderer({
-      width: 800,
-      height: 600,
-      pixelRatio: 2,
-      background: "#fff",
-    });
+    const { decoded } = stubImages();
+    const renderer = newRenderer();
     renderer.submit({ svg: "<svg>page</svg>", width: 800, height: 600 });
     await vi.waitFor(() => expect(decoded).toHaveLength(1));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     renderer.setPaused(true);
     renderer.setResolution(1);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     expect(decoded).toHaveLength(1);
     renderer.setPaused(false);
     await vi.waitFor(() => expect(decoded).toHaveLength(2));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     // The page failed: its picture is gone, and is not drawn again.
     renderer.clear();
     renderer.setResolution(0.5);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     expect(decoded).toHaveLength(2);
     renderer.dispose();
   });
 
   it("keeps the frames that come while paused, and draws only the newest when resumed", async () => {
-    // The SVGs it starts to decode (none decodes: drawing is not what this is about).
-    const decoded: string[] = [];
-    vi.stubGlobal(
-      "Image",
-      class {
-        decoding = "";
-        onload: (() => void) | null = null;
-        onerror: (() => void) | null = null;
-        set src(value: string) {
-          decoded.push(decodeURIComponent(value.slice(value.indexOf(",") + 1)));
-          queueMicrotask(() => this.onerror?.());
-        }
-      },
-    );
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
-      fillRect: () => {},
-      drawImage: () => {},
-    } as unknown as CanvasRenderingContext2D);
-    const renderer = new FrameRenderer({
-      width: 10,
-      height: 10,
-      pixelRatio: 1,
-      background: "#fff",
-    });
+    // None decodes: drawing is not what this is about.
+    const { decoded } = stubImages({ fail: true });
+    const renderer = newRenderer({ width: 10, height: 10, pixelRatio: 1 });
     renderer.setPaused(true);
     renderer.submit({ svg: "<svg>1</svg>", width: 10, height: 10 });
     renderer.submit({ svg: "<svg>2</svg>", width: 10, height: 10 });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     expect(decoded).toEqual([]);
     renderer.setPaused(false);
     await vi.waitFor(() => expect(decoded).toEqual(["<svg>2</svg>"]));
@@ -301,35 +252,13 @@ describe("FrameRenderer", () => {
   });
 
   it("does not go on to the next frame once paused while one was being decoded", async () => {
-    const decoded: string[] = [];
-    const finish: (() => void)[] = [];
-    vi.stubGlobal(
-      "Image",
-      class {
-        decoding = "";
-        onload: (() => void) | null = null;
-        onerror: (() => void) | null = null;
-        set src(value: string) {
-          decoded.push(decodeURIComponent(value.slice(value.indexOf(",") + 1)));
-          finish.push(() => this.onerror?.());
-        }
-      },
-    );
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
-      fillRect: () => {},
-      drawImage: () => {},
-    } as unknown as CanvasRenderingContext2D);
-    const renderer = new FrameRenderer({
-      width: 10,
-      height: 10,
-      pixelRatio: 1,
-      background: "#fff",
-    });
+    const { decoded, finish } = stubImages({ manual: true, fail: true });
+    const renderer = newRenderer({ width: 10, height: 10, pixelRatio: 1 });
     renderer.submit({ svg: "<svg>1</svg>", width: 10, height: 10 });
     renderer.setPaused(true);
     renderer.submit({ svg: "<svg>2</svg>", width: 10, height: 10 });
     finish.shift()!();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settle();
     expect(decoded).toEqual(["<svg>1</svg>"]);
     renderer.setPaused(false);
     await vi.waitFor(() => expect(decoded).toEqual(["<svg>1</svg>", "<svg>2</svg>"]));

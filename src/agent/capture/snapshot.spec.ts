@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   buildFrameSvg,
@@ -10,6 +9,7 @@ import {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  delete (document as { getAnimations?: unknown }).getAnimations;
   vi.restoreAllMocks();
 });
 
@@ -115,7 +115,6 @@ describe("what the CSSOM loses", () => {
     document.body.innerHTML =
       `<span id="spinner" class="spinner" style="padding-left: 3px"></span>` +
       `<span id="other" style="padding-left: 4px"></span>`;
-    document.getAnimations = () => [];
     const xhtml = snapshotDocument(document, {
       inlineImage: () => null,
       lost: matchLostDeclarations(document, [
@@ -162,7 +161,6 @@ describe("matchLostDeclarations", () => {
 
   it("puts what a pseudo-element lost in a rule of its own for the element's copy", () => {
     document.body.innerHTML = `<i id="a" class="a"></i>`;
-    document.getAnimations = () => [];
     const computed = window.getComputedStyle;
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
       pseudo === "::after"
@@ -185,7 +183,6 @@ describe("matchLostDeclarations", () => {
 describe("indeterminate <progress>", () => {
   it("is drawn by the agent, its bar where the time has it; one with a value is the browser's", () => {
     document.body.innerHTML = `<progress id="waiting"></progress><progress id="done" value="1"></progress>`;
-    document.getAnimations = () => [];
     const xhtml = snapshotDocument(document, { inlineImage: () => null });
     const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
     const waiting = copy.getElementById("waiting") as HTMLElement;
@@ -203,7 +200,6 @@ describe("shadow roots", () => {
     host.attachShadow({
       mode: "open",
     }).innerHTML = `<style>div { display: block }</style><div id="inner"><slot id="slot"></slot></div>`;
-    document.getAnimations = () => [];
     const xhtml = snapshotDocument(document, { inlineImage: () => null });
     const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
     expect(copy.querySelector("#host > #inner > #slot > #light")).not.toBeNull();
@@ -225,7 +221,6 @@ describe("shadow roots", () => {
     host.attachShadow({
       mode: "open",
     }).innerHTML = `<div id="inner" style="--accent: red; color: var(--accent) !important"></div>`;
-    document.getAnimations = () => [];
     const roots: ShadowRoot[] = [];
     const xhtml = snapshotDocument(document, {
       inlineImage: () => null,
@@ -241,7 +236,6 @@ describe("shadow roots", () => {
     document.body.innerHTML = `<x-card id="host"></x-card>`;
     const root = document.querySelector("#host")!.attachShadow({ mode: "open" });
     root.innerHTML = `<div id="inner"></div>`;
-    document.getAnimations = () => [];
     const shadowStyles = { version: "1", computed: new WeakMap() };
     const display = () => {
       const xhtml = snapshotDocument(document, { inlineImage: () => null, shadowStyles });
@@ -260,7 +254,6 @@ describe("text being composed", () => {
   it("shows in the copy, not in the page, and is underlined", () => {
     document.body.innerHTML = `<input id="name" value="ab">`;
     const field = document.querySelector<HTMLInputElement>("#name")!;
-    document.getAnimations = () => [];
     const xhtml = snapshotDocument(document, {
       inlineImage: () => null,
       composition: {
@@ -290,7 +283,9 @@ describe("endOffsetOf", () => {
     expect(endOffsetOf({ iterations: Number.POSITIVE_INFINITY })).toBeNull();
     expect(endOffsetOf({ iterations: 1.5 })).toBeNull();
   });
+});
 
+describe("isSampledLive", () => {
   it("samples live only what does not end on a keyframe", () => {
     const box = document.createElement("div");
     expect(isSampledLive(animation(box, [], { iterations: 1 }))).toBe(false);
@@ -1074,7 +1069,6 @@ describe("scrolled content", () => {
     scroll(new Map([[document.documentElement, { top: 300 }]]));
     document.body.getBoundingClientRect = () => new DOMRect(8, 8 - 300, 700, 2000);
     const copy = snapshot().getElementById("toast")!;
-    delete (document as { getAnimations?: unknown }).getAnimations;
     // 20px from the document's start; the body's box starts 8px below it.
     expect(copy.style.top).toBe("12px");
     expect(copy.style.width).toBe("200px");
@@ -1117,7 +1111,6 @@ describe("scrolled content", () => {
     Object.defineProperty(box, "clientHeight", { value: 200 });
     toolbar.getBoundingClientRect = () => new DOMRect(10, 30, 300, 40);
     const copy = snapshot().getElementById("toolbar")!;
-    delete (document as { getAnimations?: unknown }).getAnimations;
     // Its margin box fits as the animation ends (0px), though not now (20px): held, not translated.
     expect(copy.style.top).toBe("0px");
     expect(copy.style.getPropertyValue("translate")).toBe("");
@@ -1190,7 +1183,6 @@ describe("scrolled content", () => {
       ]),
     );
     const copy = snapshot();
-    delete (document as { getAnimations?: unknown }).getAnimations;
     expect(copy.getElementById("item")!.style.marginTop).toBe("-20px");
     expect(copy.getElementById("sticky")!.style.getPropertyValue("translate")).toBe("0px -54px");
   });

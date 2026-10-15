@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { interceptLinks } from "./links";
 

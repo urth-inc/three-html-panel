@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { Mesh, PlaneGeometry, Vector2 } from "three";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { HtmlPanel } from "./html-panel";

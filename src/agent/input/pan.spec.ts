@@ -1,7 +1,7 @@
-// @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { InputSynthesizer } from "./input";
 import { panAxes } from "./pan";
+import { eventsWithoutView } from "../../test-helpers";
 
 describe("panAxes", () => {
   it("allows both directions unless touch-action limits them", () => {
@@ -14,27 +14,14 @@ describe("panAxes", () => {
   });
 });
 
-// jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
-// Window); events are made here without it.
-beforeAll(() => {
-  type EventClass = new (type: string, init?: EventInit) => Event;
-  const withoutView = (Base: EventClass) =>
-    class extends Base {
-      constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-        const { view: _view, ...rest } = init;
-        super(type, rest);
-      }
-    };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
-});
+beforeAll(eventsWithoutView);
 
 describe("dragging to scroll", () => {
   let input: InputSynthesizer;
   let box: HTMLDivElement;
   let events: string[];
+  const record = (event: Event) => events.push(event.type);
+  const TYPES = ["pointerdown", "pointermove", "pointerup", "pointercancel", "click"];
 
   beforeEach(() => {
     input ??= new InputSynthesizer(document, { measure: (run) => run(), onChange: () => {} });
@@ -60,12 +47,13 @@ describe("dragging to scroll", () => {
     const text = document.querySelector("#text")!;
     document.elementFromPoint = () => text;
     events = [];
-    for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "click"]) {
-      document.addEventListener(type, (event) => events.push(event.type));
-    }
+    for (const type of TYPES) document.addEventListener(type, record);
   });
 
-  afterEach(() => input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 }));
+  afterEach(() => {
+    for (const type of TYPES) document.removeEventListener(type, record);
+    input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+  });
 
   const pointer = (
     kind: "down" | "move" | "up",
@@ -95,9 +83,7 @@ describe("dragging to scroll", () => {
     pointer("move", 40);
     expect(box.scrollTop).toBe(0);
     pointer("up", 40);
-    // (Each test's listeners stay on the document: each event is there as often.)
-    expect(events).toContain("click");
-    expect(events).not.toContain("pointercancel");
+    expect(events).toEqual(["pointerdown", "pointermove", "pointerup", "click"]);
     // Past it, it scrolls; and the next press has the page's own slop again.
     events.length = 0;
     input.handle({ type: "pointer", kind: "down", x: 50, y: 60, input: "touch", slop: 30 });
@@ -129,7 +115,7 @@ describe("dragging to scroll", () => {
     pointer("move", 30);
     pointer("up", 30);
     expect(box.scrollTop).toBe(0);
-    expect(events).toContain("pointerup");
+    expect(events).toEqual(["pointerdown", "pointermove", "pointerup"]);
 
     document.querySelector<HTMLElement>("#text")!.style.touchAction = "";
     const cancel = (event: Event) => event.preventDefault();

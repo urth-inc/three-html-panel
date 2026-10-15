@@ -1,14 +1,14 @@
-// @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { rememberShadowRoot } from "../flat-tree";
+import { eventsWithoutView, stubContentEditable } from "../../test-helpers";
 import { InputSynthesizer } from "./input";
+import { keyInput, type Modifiers } from "./test-input";
 
 let input: InputSynthesizer;
 const onChange = vi.fn();
 
 beforeAll(() => {
-  // jsdom has no PointerEvent.
-  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
+  eventsWithoutView();
   input = new InputSynthesizer(document, { measure: (run) => run(), onChange });
 });
 
@@ -21,15 +21,8 @@ beforeEach(() => {
   input.handle({ type: "blur" });
 });
 
-const key = (key: string) =>
-  input.handle({
-    type: "key",
-    key,
-    shiftKey: false,
-    ctrlKey: false,
-    altKey: false,
-    metaKey: false,
-  });
+const key = (key: string, modifiers?: Modifiers) =>
+  input.handle({ type: "key", ...keyInput(key, modifiers) });
 
 describe("pointer capture of the synthetic pointer", () => {
   it("is held by the element that took it, until it lets it go", () => {
@@ -147,14 +140,7 @@ describe("text editing", () => {
     const field = document.querySelector<HTMLInputElement>("#name")!;
     field.focus();
     field.setSelectionRange(1, 1);
-    input.handle({
-      type: "key",
-      key: "a",
-      shiftKey: false,
-      ctrlKey: true,
-      altKey: false,
-      metaKey: false,
-    });
+    key("a", { ctrlKey: true });
     expect([field.selectionStart, field.selectionEnd]).toEqual([0, 2]);
   });
 
@@ -164,26 +150,15 @@ describe("text editing", () => {
     const textarea = document.querySelector("textarea")!;
     textarea.focus();
     textarea.setSelectionRange(5, 5);
-    const press = (key: string, modifiers: { ctrlKey?: boolean; metaKey?: boolean }) =>
-      input.handle({
-        type: "key",
-        key,
-        shiftKey: false,
-        ctrlKey: false,
-        altKey: false,
-        metaKey: false,
-        ...modifiers,
-      });
-
-    press("a", { ctrlKey: true });
+    key("a", { ctrlKey: true });
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 3]);
-    press("e", { ctrlKey: true });
+    key("e", { ctrlKey: true });
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 6]);
     // Typing after Ctrl+A inserts at the line start instead of replacing everything.
-    press("a", { ctrlKey: true });
+    key("a", { ctrlKey: true });
     input.handle({ type: "text", text: "X" });
     expect(textarea.value).toBe("ab\nXcde\nf");
-    press("a", { metaKey: true });
+    key("a", { metaKey: true });
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 9]);
   });
 
@@ -191,18 +166,6 @@ describe("text editing", () => {
     document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`;
     const go = document.querySelector("#go")!;
     const text = document.querySelector("#text")!;
-    // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
-    // Window): the pointer events hovering dispatches are made here without it.
-    type EventClass = new (type: string, init?: EventInit) => Event;
-    const withoutView = (Base: EventClass) =>
-      class extends Base {
-        constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-          const { view: _view, ...rest } = init;
-          super(type, rest);
-        }
-      };
-    vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
-    vi.stubGlobal("PointerEvent", withoutView(PointerEvent as EventClass));
     let hit: Element | null = null;
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
     const hover = (target: Element | null) => {
@@ -210,12 +173,7 @@ describe("text editing", () => {
       input.handle({ type: "pointer", kind: "move", x: 1, y: 1 });
     };
     // jsdom has no isContentEditable.
-    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.closest("[contenteditable=true]") !== null;
-      },
-    });
+    const undoContentEditable = stubContentEditable();
     try {
       hover(go);
       expect(input.cursor).toBe("pointer");
@@ -236,8 +194,7 @@ describe("text editing", () => {
       expect(input.cursor).toBe("");
     } finally {
       delete (document as { elementFromPoint?: unknown }).elementFromPoint;
-      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
-      vi.unstubAllGlobals();
+      undoContentEditable();
     }
   });
 
@@ -266,8 +223,7 @@ describe("text editing", () => {
     input.handle({ type: "text", text: "d" });
     key("Backspace");
     expect(field.value).toBe("abc");
-    const command = (k: string, shiftKey = false) =>
-      input.handle({ type: "key", key: k, shiftKey, ctrlKey: false, altKey: false, metaKey: true });
+    const command = (k: string, shiftKey = false) => key(k, { shiftKey, metaKey: true });
     command("z");
     expect(field.value).toBe("abcd");
     command("z");
@@ -287,14 +243,7 @@ describe("text editing", () => {
     key("ArrowLeft");
     input.handle({ type: "text", text: "d" });
     expect(field.value).toBe("abdc");
-    input.handle({
-      type: "key",
-      key: "z",
-      shiftKey: false,
-      ctrlKey: false,
-      altKey: false,
-      metaKey: true,
-    });
+    key("z", { metaKey: true });
     expect(field.value).toBe("abc");
   });
 
@@ -319,15 +268,7 @@ describe("text editing", () => {
       <input id="c" disabled><input id="first" tabindex="1" value="x">
       <input type="radio" name="r" id="r1"><input type="radio" name="r" id="r2" checked>`;
     const byId = (id: string) => document.getElementById(id)!;
-    const tab = (shiftKey = false) =>
-      input.handle({
-        type: "key",
-        key: "Tab",
-        shiftKey,
-        ctrlKey: false,
-        altKey: false,
-        metaKey: false,
-      });
+    const tab = (shiftKey = false) => key("Tab", { shiftKey });
     tab();
     expect(input.focused).toBe(byId("first"));
     tab();
@@ -353,15 +294,7 @@ describe("text editing", () => {
     root.innerHTML = `<button id="one">One</button><button id="two">Two</button>`;
     // As the page's attachShadow tells the agent.
     rememberShadowRoot(root);
-    const tab = () =>
-      input.handle({
-        type: "key",
-        key: "Tab",
-        shiftKey: false,
-        ctrlKey: false,
-        altKey: false,
-        metaKey: false,
-      });
+    const tab = () => key("Tab");
     root.querySelector<HTMLElement>("#one")!.focus();
     tab();
     expect(input.focused).toBe(root.querySelector("#two"));
@@ -375,15 +308,7 @@ describe("text editing", () => {
     root.innerHTML = `<button id="inner">Inner</button><button id="early" tabindex="1">Early</button>
       <input type="radio" name="size" id="small"><input type="radio" name="size" id="large" checked>`;
     rememberShadowRoot(root);
-    const tab = () =>
-      input.handle({
-        type: "key",
-        key: "Tab",
-        shiftKey: false,
-        ctrlKey: false,
-        altKey: false,
-        metaKey: false,
-      });
+    const tab = () => key("Tab");
     const order: string[] = [];
     for (let step = 0; step < 5; step++) {
       tab();

@@ -1,9 +1,9 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DocumentCss } from "./css";
 import { LiveInteractionCss } from "./live-css";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
+import { eventsWithoutView } from "../../test-helpers";
 
 /** The browser's, before any PageCapture wraps it. */
 // oxlint-disable-next-line typescript/unbound-method -- put back on the prototype
@@ -16,18 +16,12 @@ let captures: ReturnType<typeof vi.spyOn>;
 const move = () => capture.handle({ type: "pointer", kind: "move", x: 5, y: 5 });
 const settle = () => vi.advanceTimersByTimeAsync(100);
 
+eventsWithoutView();
+
 beforeEach(() => {
   vi.useFakeTimers();
   document.body.innerHTML = "<button>One</button><button>Two</button>";
   hit = document.querySelector("button")!;
-  vi.stubGlobal("PointerEvent", class extends MouseEvent {});
-  const Mouse = window.MouseEvent;
-  vi.spyOn(window, "MouseEvent").mockImplementation(function (type, init) {
-    return new Mouse(type, { ...init, view: null });
-  });
-  vi.spyOn(window, "PointerEvent").mockImplementation(function (type, init) {
-    return new Mouse(type, { ...init, view: null }) as PointerEvent;
-  });
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
   frames = [];
   cursors = [];
@@ -45,7 +39,6 @@ afterEach(() => {
   document.head.innerHTML = "";
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -314,14 +307,18 @@ describe("interaction states in the live page", () => {
     expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
   });
 
+  /** Where getAnimations was asked (the elements transitions were looked for in). */
+  let lookedIn: Element[] = [];
+
+  afterEach(() => {
+    delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+  });
+
   /**
    * Transitions as the browser lists them (jsdom runs none): each starts when
    * `started` says so (a hover rule's, once the mark is on), and is listed by
    * getAnimations({ subtree: true }) on its target and the elements around it.
    */
-  /** Where getAnimations was asked (the elements transitions were looked for in). */
-  let lookedIn: Element[] = [];
-
   function fakeTransitions(...specs: { target: Element; started: () => boolean }[]) {
     lookedIn = [];
     const transitions = specs.map(({ target, started }) => ({
@@ -358,18 +355,14 @@ describe("interaction states in the live page", () => {
       // The page's own, running already (an accordion opening, say).
       { target: tools, started: () => true },
     );
-    try {
-      capture.start();
-      move();
-      hitTarget = row;
-      move();
-      expect(byHover!.finish).toHaveBeenCalled();
-      // Pressed and released (every ancestor, <html> too, is :active meanwhile).
-      press();
-      expect(pageOwn!.finish).not.toHaveBeenCalled();
-    } finally {
-      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
-    }
+    capture.start();
+    move();
+    hitTarget = row;
+    move();
+    expect(byHover!.finish).toHaveBeenCalled();
+    // Pressed and released (every ancestor, <html> too, is :active meanwhile).
+    press();
+    expect(pageOwn!.finish).not.toHaveBeenCalled();
   });
 
   it("does not look for transitions in a page that has none", () => {
@@ -378,18 +371,14 @@ describe("interaction states in the live page", () => {
       configurable: true,
       value: lookups,
     });
-    try {
-      capture.start();
-      move();
-      press();
-      expect(lookups).not.toHaveBeenCalled();
-      // One in an inline style counts.
-      document.querySelector(".row")!.setAttribute("style", "transition: opacity 0.2s");
-      capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
-      expect(lookups).toHaveBeenCalled();
-    } finally {
-      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
-    }
+    capture.start();
+    move();
+    press();
+    expect(lookups).not.toHaveBeenCalled();
+    // One in an inline style counts.
+    document.querySelector(".row")!.setAttribute("style", "transition: opacity 0.2s");
+    capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+    expect(lookups).toHaveBeenCalled();
   });
 
   it("ends a transition the hover starts on a sibling, outside the row", () => {
@@ -409,19 +398,15 @@ describe("interaction states in the live page", () => {
       configurable: true,
       value: () => hitTarget,
     });
-    try {
-      capture.start();
-      move();
-      lookedIn = [];
-      // From another element onto the row (entering the page changes <html> too).
-      hitTarget = row;
-      move();
-      expect(onSibling!.finish).toHaveBeenCalled();
-      // Around the row (its parent), not the whole page.
-      expect(lookedIn).not.toContain(document.documentElement);
-    } finally {
-      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
-    }
+    capture.start();
+    move();
+    lookedIn = [];
+    // From another element onto the row (entering the page changes <html> too).
+    hitTarget = row;
+    move();
+    expect(onSibling!.finish).toHaveBeenCalled();
+    // Around the row (its parent), not the whole page.
+    expect(lookedIn).not.toContain(document.documentElement);
   });
 
   it("looks for transitions everywhere when a hover rule uses :has()", () => {
@@ -431,13 +416,9 @@ describe("interaction states in the live page", () => {
       "aside { transition: transform 0.3s } body:has(.row:hover) aside { transform: none }";
     document.head.append(style);
     fakeTransitions({ target: row, started: () => false });
-    try {
-      capture.start();
-      move();
-      expect(lookedIn).toContain(document.documentElement);
-    } finally {
-      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
-    }
+    capture.start();
+    move();
+    expect(lookedIn).toContain(document.documentElement);
   });
 
   it("does not check the page for transitions on captures where no mark changes", async () => {
