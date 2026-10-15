@@ -8,12 +8,11 @@
 // the page's scripts run. The agent does not capture more often than the
 // pacer's shortest interval, so running frames more often would not show.
 
-type View = Window & typeof globalThis;
+import type { FrameWindow } from "../types";
+import { MIN_INTERVAL_MS } from "./capture/pacer";
 
-/** The capture's shortest interval (RenderPacer's minIntervalMs). */
-const FRAME_INTERVAL_MS = 16;
-
-export function emulateAnimationFrames(view: View, intervalMs = FRAME_INTERVAL_MS): void {
+/** Runs frames at the capture's shortest interval. */
+export function emulateAnimationFrames(view: FrameWindow, intervalMs = MIN_INTERVAL_MS): void {
   // Keep what is used, in case the page replaces it later.
   const apply = Reflect.apply;
   const setTimer = view.setTimeout;

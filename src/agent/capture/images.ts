@@ -24,7 +24,8 @@ export class ImageInliner {
           this.#dataUrls.set(url, dataUrl);
           this.#onLoad();
         })
-        .catch(() => this.#dataUrls.set(url, null));
+        // It stays null: not tried again.
+        .catch(() => {});
     }
     return this.#dataUrls.get(url) ?? null;
   }

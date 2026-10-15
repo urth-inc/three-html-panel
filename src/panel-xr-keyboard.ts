@@ -108,7 +108,6 @@ const GAP_PX = 6;
 export class PanelXRKeyboard extends Mesh<PlaneGeometry, MeshBasicMaterial> {
   /** The panel the keys type into, which the keyboard is shown under; null when hidden. */
   target: HtmlPanel | null = null;
-  private layout: Layout = "letters";
   private keys = keysOf("letters");
   private shifted = false;
   private hovered: Key | null = null;
@@ -185,7 +184,6 @@ export class PanelXRKeyboard extends Mesh<PlaneGeometry, MeshBasicMaterial> {
         this.shifted = !this.shifted;
         break;
       case "layout":
-        this.layout = action.layout;
         this.keys = keysOf(action.layout);
         this.shifted = false;
         this.hovered = null;

@@ -34,7 +34,7 @@ interface Controller {
 export class PanelXRPointer {
   private readonly raycaster = new Raycaster();
   private readonly controllers: Controller[];
-  private hovered: { panel: HtmlPanel; controller: Controller } | null = null;
+  private hovered: HtmlPanel | null = null;
   private pressed: { panel: HtmlPanel; controller: Controller } | null = null;
   private lastUpdate = 0;
   private readonly cleanups: (() => void)[] = [];
@@ -110,7 +110,7 @@ export class PanelXRPointer {
       }
     }
     this.keyboard?.hover(keyboardUv);
-    this.hover(hit && { panel: hit.panel, controller: hit.controller });
+    this.hover(hit?.panel ?? null);
     if (!hit) return;
     hit.panel.pointer("move", hit.uv, false, "xr");
     const axes = hit.controller.source?.gamepad?.axes;
@@ -159,7 +159,7 @@ export class PanelXRPointer {
     for (const panel of this.panels()) if (panel !== hit?.panel) panel.blur();
     if (!hit) return;
     this.pressed = { panel: hit.panel, controller };
-    this.hover({ panel: hit.panel, controller });
+    this.hover(hit.panel);
     const slop = hit.panel.slopFor(hit.uv, slopRays(hit.ray));
     hit.panel.pointer("down", hit.uv, false, "xr", { slop });
   }
@@ -174,12 +174,9 @@ export class PanelXRPointer {
     pressed.panel.pointer("up", uv, false, "xr");
   }
 
-  private hover(next: { panel: HtmlPanel; controller: Controller } | null): void {
-    if (next?.panel === this.hovered?.panel) {
-      this.hovered = next;
-      return;
-    }
-    this.hovered?.panel.pointer("leave");
+  private hover(next: HtmlPanel | null): void {
+    if (next === this.hovered) return;
+    this.hovered?.pointer("leave");
     this.hovered = next;
   }
 }

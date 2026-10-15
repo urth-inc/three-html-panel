@@ -26,6 +26,9 @@ export interface Scrollbar {
 const OVERLAY_THICKNESS = 10;
 const MIN_THUMB_LENGTH = 24;
 const SCROLLABLE = new Set(["auto", "scroll", "overlay"]);
+
+/** Whether an overflow value (overflow-x or overflow-y, as computed) lets the box scroll. */
+export const isScrollableOverflow = (overflow: string) => SCROLLABLE.has(overflow);
 /** Single-line inputs scroll without a scrollbar. */
 const SKIPPED = new Set(["INPUT"]);
 

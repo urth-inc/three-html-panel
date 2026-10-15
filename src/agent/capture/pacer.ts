@@ -12,13 +12,20 @@ export interface PacerOptions {
   maxIntervalMs?: number;
 }
 
+/** The shortest interval between captures (ms), by default: about one a display frame. */
+export const MIN_INTERVAL_MS = 16;
+
 export class RenderPacer {
   readonly #budget: number;
   readonly #minIntervalMs: number;
   readonly #maxIntervalMs: number;
   #intervalMs: number;
 
-  constructor({ budget = 0.25, minIntervalMs = 16, maxIntervalMs = 500 }: PacerOptions = {}) {
+  constructor({
+    budget = 0.25,
+    minIntervalMs = MIN_INTERVAL_MS,
+    maxIntervalMs = 500,
+  }: PacerOptions = {}) {
     this.#budget = budget;
     this.#minIntervalMs = minIntervalMs;
     this.#maxIntervalMs = maxIntervalMs;

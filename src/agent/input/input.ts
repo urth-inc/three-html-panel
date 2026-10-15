@@ -43,7 +43,7 @@ import {
   shadowRootOf,
 } from "../flat-tree";
 import { contentAction } from "./contenteditable";
-import { editAction, lineEnd, lineStart, wordAt } from "./editing";
+import { editAction, lineEnd, lineStart, primaryModifier, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
 import { InteractionMarks } from "./interaction-marks";
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan";
@@ -62,6 +62,7 @@ import {
 import {
   contains,
   hitBox,
+  isScrollableOverflow,
   maxScroll,
   scrollbarAt,
   scrollbarsOf,
@@ -88,6 +89,21 @@ const POINTER_ID = 1;
 /** Movement (CSS px) after which a press is a drag, not a click. */
 const CLICK_SLOP = 6;
 const DOUBLE_CLICK_MS = 500;
+
+/**
+ * Whether a press or click at (x, y) now repeats `last` (a double click): soon
+ * enough, and as near as a tap may wobble (see movedOff): on a panel drawn
+ * small, a second tap is many px off.
+ */
+const isRepeat = (
+  last: { time: number; x: number; y: number },
+  now: number,
+  x: number,
+  y: number,
+  slop: number,
+) =>
+  now - last.time < DOUBLE_CLICK_MS &&
+  Math.hypot(x - last.x, y - last.y) <= Math.max(CLICK_SLOP, slop);
 /** Pressing a scrollbar's track scrolls by this share of the visible length, like browsers do. */
 const PAGE_SCROLL_RATIO = 0.875;
 /** Holding a press on the track keeps paging: after this long, then at this interval. */
@@ -213,7 +229,7 @@ function commonAncestor(a: Element, b: Element): Element | null {
  * still happen (an `autofocus` attribute, the browser's own handling) are
  * swallowed and turned into virtual focus.
  */
-export class VirtualFocus {
+class VirtualFocus {
   #element: Element | null = null;
   readonly #window: FrameWindow;
   readonly #onChange: () => void;
@@ -1071,13 +1087,7 @@ export class InputSynthesizer {
     }
     const now = performance.now();
     const last = this.#lastDown;
-    // As far apart as a tap may wobble (see movedOff): on a panel drawn small, a second tap is many px off.
-    const count =
-      last &&
-      now - last.time < DOUBLE_CLICK_MS &&
-      Math.hypot(x - last.x, y - last.y) <= Math.max(CLICK_SLOP, hostSlop)
-        ? last.count + 1
-        : 1;
+    const count = last && isRepeat(last, now, x, y, hostSlop) ? last.count + 1 : 1;
     this.#lastDown = { time: now, x, y, count };
     const target = this.#hitTest(x, y);
     this.#updateHover(target, x, y);
@@ -1174,9 +1184,7 @@ export class InputSynthesizer {
   /** The keys on a focused list box: arrows, Home and End move the selection (Shift extends it), Ctrl/Cmd+A selects all. */
   #listBoxKey(select: HTMLSelectElement, input: Extract<PanelInput, { type: "key" }>): void {
     const { key, shiftKey, altKey } = input;
-    const primary = this.#isApple()
-      ? input.metaKey && !input.ctrlKey
-      : input.ctrlKey && !input.metaKey;
+    const primary = primaryModifier(input, this.#isApple());
     const before = selectionOf(select);
     if (primary && !altKey && key.toLowerCase() === "a" && select.multiple) {
       selectRange(select, 0, select.options.length - 1);
@@ -1299,10 +1307,7 @@ export class InputSynthesizer {
     if (!clickTarget) return;
     const now = performance.now();
     const last = this.#lastClick;
-    const isDouble =
-      last !== null &&
-      now - last.time < DOUBLE_CLICK_MS &&
-      Math.hypot(x - last.x, y - last.y) <= Math.max(CLICK_SLOP, press.hostSlop);
+    const isDouble = last !== null && isRepeat(last, now, x, y, press.hostSlop);
     clickTarget.dispatchEvent(this.#pointerEvent("click", { ...init, detail: isDouble ? 2 : 1 }));
     if (isDouble) {
       clickTarget.dispatchEvent(this.#mouseEvent("dblclick", { ...init, detail: 2 }));
@@ -1397,11 +1402,11 @@ export class InputSynthesizer {
       const style = this.#window.getComputedStyle(element);
       const y =
         axes.y &&
-        /(auto|scroll|overlay)/.test(style.overflowY) &&
+        isScrollableOverflow(style.overflowY) &&
         element.scrollHeight > element.clientHeight + 1;
       const x =
         axes.x &&
-        /(auto|scroll|overlay)/.test(style.overflowX) &&
+        isScrollableOverflow(style.overflowX) &&
         element.scrollWidth > element.clientWidth + 1;
       if (x || y) return element;
     }
@@ -1494,8 +1499,8 @@ export class InputSynthesizer {
 
   #canScroll(element: Element, deltaX: number, deltaY: number): boolean {
     const style = this.#window.getComputedStyle(element);
-    const scrollableY = /(auto|scroll|overlay)/.test(style.overflowY);
-    const scrollableX = /(auto|scroll|overlay)/.test(style.overflowX);
+    const scrollableY = isScrollableOverflow(style.overflowY);
+    const scrollableX = isScrollableOverflow(style.overflowX);
     if (
       scrollableY &&
       deltaY > 0 &&
@@ -1593,12 +1598,9 @@ export class InputSynthesizer {
     }
 
     const field = target;
-    const length = field.value.length;
     const action = editAction(
       {
-        value: field.value,
-        start: field.selectionStart ?? length,
-        end: field.selectionEnd ?? length,
+        ...this.#stateOf(field),
         direction: field.selectionDirection ?? "none",
         multiline: field.tagName === "TEXTAREA",
       },
@@ -1902,14 +1904,8 @@ export class InputSynthesizer {
       return;
     }
     if (!isTextField(target)) return;
-    const length = target.value.length;
-    this.#editText(
-      target,
-      text,
-      target.selectionStart ?? length,
-      target.selectionEnd ?? length,
-      "insertText",
-    );
+    const { start, end } = this.#stateOf(target);
+    this.#editText(target, text, start, end, "insertText");
   }
 
   /**

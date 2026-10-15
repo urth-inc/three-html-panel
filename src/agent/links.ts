@@ -7,7 +7,8 @@
 // page's window.open(), are handed to the host, which opens them (in a new tab,
 // by default). Links within the page (#fragment) are left alone.
 
-const OPENABLE_PROTOCOLS = new Set(["http:", "https:"]);
+import { OPENABLE_PROTOCOLS } from "../protocol";
+import type { FrameWindow } from "../types";
 
 /** The absolute URL a link or window.open() names, if the host should open it. */
 function openableUrl(href: string, base: string): string | null {
@@ -32,10 +33,7 @@ function isInPage(url: string, location: Location): boolean {
 }
 
 /** Hands the page's link clicks and window.open() to `open`. Returns a function that stops it. */
-export function interceptLinks(
-  window: Window & typeof globalThis,
-  open: (url: string) => void,
-): () => void {
+export function interceptLinks(window: FrameWindow, open: (url: string) => void): () => void {
   const { document } = window;
 
   // Whether the page cancels a click is known only once its handlers ran. A
