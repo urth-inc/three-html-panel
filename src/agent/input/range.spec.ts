@@ -32,28 +32,41 @@ describe("helpers", () => {
   it("reads the bounds with the defaults browsers use", () => {
     slider.removeAttribute("min");
     slider.removeAttribute("max");
-    expect(boundsOf(slider)).toEqual({ min: 0, max: 100, step: 1 });
+    expect(boundsOf(slider)).toEqual({ min: 0, max: 100, step: 1, base: 5 });
     slider.min = "10";
     slider.max = "5";
     slider.step = "-2";
     // A maximum below the minimum is the minimum; a step that is not positive is the default.
-    expect(boundsOf(slider)).toEqual({ min: 10, max: 10, step: 1 });
+    expect(boundsOf(slider)).toEqual({ min: 10, max: 10, step: 1, base: 10 });
     slider.step = "any";
     expect(boundsOf(slider).step).toBe(0);
   });
 
   it("snaps to a step from the minimum, within the range", () => {
-    const bounds = { min: 1, max: 50, step: 5 };
+    const bounds = { min: 1, max: 50, step: 5, base: 1 };
     expect(snap(13, bounds)).toBe(11);
     // The last step at most, not the maximum itself.
     expect(snap(49, bounds)).toBe(46);
     expect(snap(-3, bounds)).toBe(1);
     // Tenths stay tenths (0.1 * 3 is 0.30000000000000004).
-    expect(snap(0.31, { min: 0, max: 1, step: 0.1 })).toBe(0.3);
-    expect(snap(0.317, { min: 0, max: 1, step: 0 })).toBe(0.317);
+    expect(snap(0.31, { min: 0, max: 1, step: 0.1, base: 0 })).toBe(0.3);
+    expect(snap(0.317, { min: 0, max: 1, step: 0, base: 0 })).toBe(0.317);
     // Small steps are written with an exponent (1e-7): still steps, not whole numbers.
-    expect(snap(0.00000034, { min: 0, max: 1, step: 1e-7 })).toBe(3e-7);
-    expect(snap(0.000000253, { min: 0, max: 1, step: 1.5e-8 })).toBe(2.55e-7);
+    expect(snap(0.00000034, { min: 0, max: 1, step: 1e-7, base: 0 })).toBe(3e-7);
+    expect(snap(0.000000253, { min: 0, max: 1, step: 1.5e-8, base: 0 })).toBe(2.55e-7);
+  });
+
+  it("counts the steps from the default value when there is no min, as HTML does", () => {
+    // step=2 value=3, no min: 1, 3, 5... (not 0, 2, 4...).
+    document.body.innerHTML = `<input type="range" step="2" value="3" />`;
+    const odd = document.querySelector("input")!;
+    expect(boundsOf(odd)).toEqual({ min: 0, max: 100, step: 2, base: 3 });
+    expect(snap(4.2, boundsOf(odd))).toBe(5);
+    expect(snap(0, boundsOf(odd))).toBe(1);
+    expect(snap(100, boundsOf(odd))).toBe(99);
+    odd.value = "5";
+    expect(valueAfterKey(odd, "ArrowRight")).toBe(7);
+    expect(valueAfterKey(odd, "Home")).toBe(1);
   });
 
   it("finds the value at a point: the ends half a thumb in, right to left too", () => {
@@ -174,7 +187,7 @@ describe("moving a slider in the panel", () => {
     expect(events).toEqual(["input 25", "change 25"]);
   });
 
-  it("lets go of a slider press that never got its release when the next press comes", () => {
+  it("lets go of a slider press that never got its release when the next press comes, committing it", () => {
     pointer("down", 208);
     // No release: the next press is on something else, and drags.
     const other = document.createElement("p");
@@ -184,7 +197,7 @@ describe("moving a slider in the panel", () => {
     pointer("move", 300);
     pointer("up", 300);
     expect(slider.value).toBe("25");
-    expect(events).toEqual(["input 25"]);
+    expect(events).toEqual(["input 25", "change 25"]);
   });
 
   it("steps with the keys once focused, each a committed change", () => {

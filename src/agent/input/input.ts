@@ -1081,9 +1081,9 @@ export class InputSynthesizer {
     this.#pointer = { x, y };
     this.#pointerInput = input;
     this.#pan = null;
-    // A slider press the last one left (it never got its release) moves nothing more.
-    this.#rangePress?.stop();
-    this.#rangePress = null;
+    // A slider press the last one left (it never got its release) moves nothing
+    // more, and commits what it moved (change), as its release would have.
+    this.#releaseRange();
     // The list of a <select> is not the page either. A press elsewhere only closes it.
     if (this.#popup) {
       if (this.#popup.contains(x, y)) {

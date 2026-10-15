@@ -29,6 +29,8 @@ interface Bounds {
   max: number;
   /** 0 for step="any". */
   step: number;
+  /** Where the steps count from: the min attribute, or else the value attribute, or else 0. */
+  base: number;
 }
 
 const parse = (value: string, fallback: number) => {
@@ -41,11 +43,13 @@ export function boundsOf(slider: HTMLInputElement): Bounds {
   const min = parse(slider.min, 0);
   // A maximum below the minimum is the minimum.
   const max = Math.max(min, parse(slider.max, 100));
+  // The step base, as HTML has it: without a min, the steps count from the default value.
+  const base = parse(slider.min, parse(slider.getAttribute("value") ?? "", 0));
   const step = slider.getAttribute("step")?.trim().toLowerCase() ?? "";
-  if (step === "any") return { min, max, step: 0 };
+  if (step === "any") return { min, max, step: 0, base };
   // A missing, zero or negative step is the default one.
   const parsed = parse(step, 1);
-  return { min, max, step: parsed > 0 ? parsed : 1 };
+  return { min, max, step: parsed > 0 ? parsed : 1, base };
 }
 
 /**
@@ -60,17 +64,19 @@ const decimals = (value: number) => {
 
 /**
  * The value nearest to `value` that the slider allows, as browsers sanitize it:
- * on a step from the minimum, within the range (the last step at most), the
- * higher one when two are as near.
+ * on a step from the step base, within the range (the first or last step at
+ * most), the higher one when two are as near.
  */
-export function snap(value: number, { min, max, step }: Bounds): number {
+export function snap(value: number, { min, max, step, base }: Bounds): number {
   const clamped = Math.min(max, Math.max(min, value));
   if (step === 0) return clamped;
-  const places = Math.max(decimals(step), decimals(min));
+  const places = Math.max(decimals(step), decimals(base));
   const round = (number: number) => Number(number.toFixed(places));
-  let snapped = round(min + Math.round((clamped - min) / step) * step);
+  let snapped = round(base + Math.round((clamped - base) / step) * step);
   if (snapped > max) snapped = round(snapped - step);
-  return snapped;
+  if (snapped < min) snapped = round(snapped + step);
+  // No step falls within the range: the minimum, as browsers leave it.
+  return snapped >= min && snapped <= max ? snapped : min;
 }
 
 /** Whether the slider is drawn upright (a vertical writing mode), and runs from its far end (right to left, or bottom to top). */
@@ -117,7 +123,7 @@ export function valueAfterKey(slider: HTMLInputElement, key: string): number | n
     ["PageUp", page],
     ["PageDown", -page],
   ]).get(key);
-  if (key === "Home") return min;
+  if (key === "Home") return snap(min, bounds);
   if (key === "End") return snap(max, bounds);
   if (by === undefined) return null;
   const next = snap(current + by, bounds);
