@@ -41,7 +41,8 @@ test("sets the value where the slider is pressed, and commits it on release", as
 
 test("follows a drag, with one change at the release, and draws the thumb where it went", async () => {
   const end = await along(1);
-  const before = await panel.pixel(end.x / panel.scale, end.y / panel.scale);
+  // Without WebGL (headless Firefox on Linux) the panel is not drawn: nothing to read.
+  const before = panel.drawn ? await panel.pixel(end.x / panel.scale, end.y / panel.scale) : null;
   await panel.drag(await along(0.25), end);
   await expect.poll(value).toBe("150");
   const changes = (await log()).filter((entry) => entry.startsWith("change"));
