@@ -194,6 +194,7 @@ function applyControl(control: SceneControl): void {
   if (control.shape) object.geometry = geometries[control.shape];
   if (control.color) object.material.color.set(control.color);
   if (control.spin !== undefined) spin = control.spin;
+  if (control.scale !== undefined) object.scale.setScalar(control.scale);
   if (control.caption !== undefined) caption.textContent = control.caption;
 }
 

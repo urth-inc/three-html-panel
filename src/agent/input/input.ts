@@ -18,6 +18,7 @@
 //   elements (selection.ts, contenteditable.ts)
 // - the list of a drop-down <select> (select-popup.ts), and choosing options
 //   in a list box (list-box.ts)
+// - sliders: pressing, dragging and stepping with keys (range.ts)
 // - scrolling by dragging a finger or a VR controller, as touch does (pan.ts)
 // - scrollbars: dragging the thumb, paging by pressing (and holding) the
 //   track (the scrollbars in the image are the agent's own, see scrollbars.ts)
@@ -70,6 +71,7 @@ import {
   type Axis,
   type Scrollbar,
 } from "./scrollbars";
+import { announceRangeChange, isRange, setRangeValue, valueAfterKey, valueAt } from "./range";
 import { SelectPopup, chooseOption, isDropDown, labelOf, type PopupView } from "./select-popup";
 import {
   blockAround,
@@ -454,6 +456,17 @@ export class InputSynthesizer {
     before: boolean[];
     /** The browser chose the options itself (WebKit does, even for synthetic presses): leave it to it. */
     native?: boolean;
+  } | null = null;
+  /**
+   * A press moving a slider's thumb: its value before (change fires on release
+   * if it differs), and whether the browser fired change itself meanwhile
+   * (Firefox does on a synthetic mouseup), with what stops listening for it.
+   */
+  #rangePress: {
+    slider: HTMLInputElement;
+    before: string;
+    committed: boolean;
+    stop: () => void;
   } | null = null;
   /** Per list box: the option Shift extends from, and the one the arrow keys move from. */
   readonly #listAnchors = new WeakMap<HTMLSelectElement, number>();
@@ -1068,6 +1081,9 @@ export class InputSynthesizer {
     this.#pointer = { x, y };
     this.#pointerInput = input;
     this.#pan = null;
+    // A slider press the last one left (it never got its release) moves nothing
+    // more, and commits what it moved (change), as its release would have.
+    this.#releaseRange();
     // The list of a <select> is not the page either. A press elsewhere only closes it.
     if (this.#popup) {
       if (this.#popup.contains(x, y)) {
@@ -1098,8 +1114,10 @@ export class InputSynthesizer {
     const init = this.#pointerInit(x, y, 1);
     const pointerOk = target.dispatchEvent(this.#pointerEvent("pointerdown", init));
     this.#press = { target, x, y, moved: false, mouseEvents: pointerOk, deferred: null, hostSlop };
-    // A finger or controller drag scrolls, unless the page took the press (cancelled it).
-    if (input !== "mouse" && pointerOk) this.#pan = this.#startPan(target, x, y, hostSlop);
+    // A finger or controller drag scrolls, unless the page took the press (cancelled
+    // it) or it is on a slider, whose thumb it moves (as a touch does in browsers).
+    if (input !== "mouse" && pointerOk && !isRange(target))
+      this.#pan = this.#startPan(target, x, y, hostSlop);
     if (this.#pan) {
       this.#press.deferred = { detail: count, shiftKey, toggle };
       return;
@@ -1119,6 +1137,7 @@ export class InputSynthesizer {
   ): void {
     const listBox = target.closest("select");
     const before = isListBox(listBox) ? selectionOf(listBox) : null;
+    const sliderBefore = isRange(target) ? target.value : null;
     if (
       !target.dispatchEvent(
         this.#mouseEvent("mousedown", { ...this.#pointerInit(x, y, 1), detail, shiftKey }),
@@ -1137,6 +1156,39 @@ export class InputSynthesizer {
         this.#listPress = { select, anchor: 0, toggle, before, native: true };
       else this.#pressListBox(select, y, shiftKey, toggle);
     }
+    if (sliderBefore !== null && isRange(target) && this.focused === target) {
+      // WebKit moves the thumb itself, even for a synthetic press (not for a drag): left to it.
+      if (target.value === sliderBefore) setRangeValue(target, valueAt(target, x, y));
+      const press = { slider: target, before: sliderBefore, committed: false, stop: () => {} };
+      const committed = () => (press.committed = true);
+      target.addEventListener("change", committed, true);
+      press.stop = () => target.removeEventListener("change", committed, true);
+      this.#rangePress?.stop();
+      this.#rangePress = press;
+    }
+  }
+
+  // --- Sliders -----------------------------------------------------------------
+
+  /** A drag moves the thumb with the pointer, wherever it goes. */
+  #dragRange(x: number, y: number): void {
+    const { slider } = this.#rangePress!;
+    if (slider.isConnected && isRange(slider)) setRangeValue(slider, valueAt(slider, x, y));
+  }
+
+  /** The press ends: the page hears the value was committed, if it changed (once: not again after the browser). */
+  #releaseRange(): void {
+    const press = this.#rangePress;
+    this.#rangePress = null;
+    if (!press) return;
+    press.stop();
+    if (!press.committed && press.slider.value !== press.before) announceRangeChange(press.slider);
+  }
+
+  /** The keys on a focused slider: the arrows, Page Up and Down, Home and End step it (see range.ts). */
+  #rangeKey(slider: HTMLInputElement, key: string): void {
+    const value = valueAfterKey(slider, key);
+    if (value !== null && setRangeValue(slider, value)) announceRangeChange(slider);
   }
 
   // --- List boxes --------------------------------------------------------------
@@ -1236,6 +1288,7 @@ export class InputSynthesizer {
     if (press && this.#textDrag?.field.isConnected) this.#dragText(x, y);
     else if (press && this.#documentDrag) this.#dragDocument(x, y);
     else if (press && this.#listPress) this.#dragListBox(y);
+    else if (press && this.#rangePress) this.#dragRange(x, y);
   }
 
   #pointerUp(x: number, y: number): void {
@@ -1292,6 +1345,7 @@ export class InputSynthesizer {
     }
     if (mouseEvents) destination.dispatchEvent(this.#mouseEvent("mouseup", init));
     this.#releaseListBox();
+    this.#releaseRange();
     if (this.#captureTarget) {
       this.#captureTarget.dispatchEvent(this.#pointerEvent("lostpointercapture", init));
       this.#captureTarget = null;
@@ -1561,10 +1615,14 @@ export class InputSynthesizer {
     };
     const { KeyboardEvent } = this.#window;
     const listBefore = isListBox(target) ? selectionOf(target) : null;
+    const sliderBefore = isRange(target) ? target.value : null;
     const allowed = target.dispatchEvent(new KeyboardEvent("keydown", init));
-    // A list box the browser moved itself (WebKit does, even for synthetic keys) is not moved again.
-    if (allowed && !(listBefore && isListBox(target) && changed(listBefore, target)))
-      this.#keyDefaultAction(target, input);
+    // A list box (or slider) the browser moved itself (WebKit does a list box's,
+    // even for synthetic keys) is not moved again.
+    const movedByBrowser =
+      (listBefore && isListBox(target) && changed(listBefore, target)) ||
+      (sliderBefore !== null && (target as HTMLInputElement).value !== sliderBefore);
+    if (allowed && !movedByBrowser) this.#keyDefaultAction(target, input);
     target.dispatchEvent(new KeyboardEvent("keyup", init));
   }
 
@@ -1588,6 +1646,10 @@ export class InputSynthesizer {
     }
     if (isEditingHost(target)) {
       this.#contentKey(target, input);
+      return;
+    }
+    if (isRange(target)) {
+      if (plain) this.#rangeKey(target, input.key);
       return;
     }
     if (!isTextField(target)) {

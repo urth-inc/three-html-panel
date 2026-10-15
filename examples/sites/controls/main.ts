@@ -14,6 +14,11 @@ form.addEventListener("change", (event) => {
   if (target.name === "shape") send({ shape: target.value as SceneControl["shape"] });
   if (target.name === "spin") send({ spin: target.checked });
 });
+const size = form.querySelector<HTMLInputElement>("[name=size]")!;
+size.addEventListener("input", () => {
+  form.querySelector("#size-out")!.textContent = `${size.value}%`;
+  send({ scale: Number(size.value) / 100 });
+});
 form.querySelector<HTMLInputElement>("[name=caption]")!.addEventListener("input", (event) => {
   send({ caption: (event.target as HTMLInputElement).value });
 });
