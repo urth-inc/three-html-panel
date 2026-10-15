@@ -132,7 +132,6 @@ function topmost(elements: Element[]): Element[] {
 function runningTransitions(roots: Element[]): Animation[] {
   const found: Animation[] = [];
   for (const root of roots) {
-    if (typeof root.getAnimations !== "function") continue;
     for (const animation of root.getAnimations({ subtree: true }))
       // A CSS transition, checked by shape (as snapshot.ts does).
       if ("transitionProperty" in animation && animation.playState === "running")
@@ -1796,13 +1795,12 @@ export class InputSynthesizer {
       )
         return false;
       if (closestInFlatTree(element, "[inert]")) return false;
-      // jsdom has no checkVisibility; there, everything counts as shown.
+      // Not in Safari before 17.4: there, everything counts as shown.
       if (
         typeof element.checkVisibility === "function" &&
         !element.checkVisibility({ visibilityProperty: true })
-      ) {
+      )
         return false;
-      }
       if (element instanceof HTMLInputElement && element.type === "radio") {
         // One stop per group: the checked radio, or else the first one.
         const group = this.#radioGroup(element);

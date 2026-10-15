@@ -1,6 +1,6 @@
 export { HtmlPanel, type HtmlPanelOptions } from "./html-panel";
 export { PanelPointer } from "./panel-pointer";
-export { PanelXRPointer } from "./panel-xr-pointer";
+export { PanelXRPointer, type XRRenderer } from "./panel-xr-pointer";
 export { PanelXRKeyboard } from "./panel-xr-keyboard";
 export { PanelKeyboard, getSharedKeyboard } from "./panel-keyboard";
 export { PROTOCOL_VERSION } from "./protocol";

@@ -63,25 +63,15 @@ function charStep(value: string, index: number, direction: -1 | 1): number {
   return high >= 0xd800 && high <= 0xdbff && index + 1 < value.length ? index + 2 : index + 1;
 }
 
-const segmenter =
-  typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "word" })
-    : null;
+const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
-/** Word segments of the value: [start, end, isWord]. Falls back to runs of letters/digits. */
+/** Word segments of the value: [start, end, isWord]. */
 function words(value: string): [number, number, boolean][] {
-  if (segmenter) {
-    return Array.from(segmenter.segment(value), (s) => [
-      s.index,
-      s.index + s.segment.length,
-      s.isWordLike ?? false,
-    ]);
-  }
-  const result: [number, number, boolean][] = [];
-  for (const match of value.matchAll(/[\p{L}\p{N}_]+|[^\p{L}\p{N}_]+/gu)) {
-    result.push([match.index, match.index + match[0].length, /[\p{L}\p{N}_]/u.test(match[0])]);
-  }
-  return result;
+  return Array.from(segmenter.segment(value), (s) => [
+    s.index,
+    s.index + s.segment.length,
+    s.isWordLike!,
+  ]);
 }
 
 /** The start of the word before `index` (skipping what is not a word). */
