@@ -2,4 +2,10 @@
 // run before the page's other scripts). Pages that load it with a <script> tag
 // use the self-starting build instead (entry.ts, published as agent-script.js).
 
-export { readHostOrigin, startAgent, type AgentOptions, type PanelAgent } from "./agent";
+export {
+  readHostOrigin,
+  readHostOrigins,
+  startAgent,
+  type AgentOptions,
+  type PanelAgent,
+} from "./agent";

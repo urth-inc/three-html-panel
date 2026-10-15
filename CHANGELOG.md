@@ -4,6 +4,12 @@ Changes to the `@urth/three-html-panel` package. Changes to the demo and example
 
 Each version's section is also the release notes of its [GitHub Release](https://github.com/urth-inc/three-html-panel/releases), made when its tag is pushed.
 
+## Unreleased
+
+### Added
+
+- Several host origins for one page: `data-host-origin` takes origins separated by white space, and `startAgent()`'s `hostOrigin` a list too. The agent posts `ready` to each (only the parent's own origin receives it) and takes `connect` from any of them. If one is not exactly an origin, the agent does not start, so a typo leaves none of them allowed. `readHostOrigins()` reads them; `readHostOrigin()`, which reads one, is deprecated.
+
 ## 0.2.6 - 2026-10-15
 
 ### Added

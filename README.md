@@ -92,6 +92,8 @@ import { startAgent } from "@urth/three-html-panel/agent";
 startAgent({ hostOrigin: "https://host.example" });
 ```
 
+A page shown by hosts on several origins (production and staging, say) names them all: separated by spaces in `data-host-origin` (`"https://host.example https://staging.example"`), or as a list in `hostOrigin`. The agent talks to whichever of them the page is shown in. If any is not exactly an origin, the agent does not start.
+
 For pages you cannot edit, a server or proxy can insert the tag; `injectPanelAgent()` in `vite.panels.config.ts` does this for the demo.
 
 ### Messages between page and host
@@ -114,7 +116,7 @@ panel.postMessage("scene-click");
 
 ## Security
 
-Loading the agent is how a page consents to being shown: the agent sends the host what the page shows, much as if the page posted its own DOM to the host, and only to the origin named in `data-host-origin` (`hostOrigin`). Name a fixed origin you trust, never one taken from the URL. The host cannot read a page that does not load the agent, and the agent reads only what the page's own scripts can (cross-origin images and stylesheets need CORS, cross-origin frames are left out). A page that is not sandboxed may show the user's own data (with third-party cookies, a logged-in view); the named host receives that too.
+Loading the agent is how a page consents to being shown: the agent sends the host what the page shows, much as if the page posted its own DOM to the host, and only to the origins named in `data-host-origin` (`hostOrigin`). Name fixed origins you trust, never one taken from the URL. The host cannot read a page that does not load the agent, and the agent reads only what the page's own scripts can (cross-origin images and stylesheets need CORS, cross-origin frames are left out). A page that is not sandboxed may show the user's own data (with third-party cookies, a logged-in view); the named host receives that too.
 
 **`sandbox: false`** runs the page as an ordinary page of its origin. Use it only for pages you trust: a page on the host's origin can read the host's cookies and storage.
 

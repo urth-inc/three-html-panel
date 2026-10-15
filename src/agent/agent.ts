@@ -4,9 +4,10 @@
 // replays the host's input in the page. The host never touches the page's
 // document, so the page can be on any origin, as long as it loads the agent.
 //
-// The agent talks only to the host origin it was given, and only after the
-// host answered: `ready` goes to the parent window addressed to that origin
-// (never "*", which would show the page to whatever embeds it), and the rest
+// The agent talks only to the host origins it was given, and only after the
+// host answered: `ready` goes to the parent window addressed to each of them
+// (never "*", which would show the page to whatever embeds it; postMessage
+// drops the copies addressed to an origin the parent is not on), and the rest
 // goes through the MessagePort the host hands over.
 
 import {
@@ -36,18 +37,47 @@ export function parseOrigin(value: string | null | undefined): string | null {
 }
 
 /**
- * The host origin from the agent's `<script data-host-origin="...">`. A module
- * script has no `document.currentScript`, so the attribute is looked up.
+ * The origins `value` names: one, several separated by white space, or a list.
+ * Null if there is none, or if any is not exactly an origin: a typo does not
+ * quietly leave the others allowed.
+ */
+export function parseOrigins(
+  value: string | readonly string[] | null | undefined,
+): string[] | null {
+  if (!value) return null;
+  const names = typeof value === "string" ? value.trim().split(/\s+/) : value;
+  const origins = names.map(parseOrigin);
+  if (origins.length === 0 || origins.some((origin) => origin === null)) return null;
+  return [...new Set(origins as string[])];
+}
+
+const hostOriginAttribute = (document: Document) =>
+  document.querySelector(`script[${HOST_ORIGIN_ATTRIBUTE}]`)?.getAttribute(HOST_ORIGIN_ATTRIBUTE);
+
+/**
+ * The host origins from the agent's `<script data-host-origin="...">`, which
+ * may name several, separated by white space. A module script has no
+ * `document.currentScript`, so the attribute is looked up.
+ */
+export function readHostOrigins(document: Document): string[] | null {
+  return parseOrigins(hostOriginAttribute(document));
+}
+
+/**
+ * The host origin from the agent's `<script data-host-origin="...">`, when it
+ * names one.
+ * @deprecated Use readHostOrigins(), which also reads several.
  */
 export function readHostOrigin(document: Document): string | null {
-  return parseOrigin(
-    document.querySelector(`script[${HOST_ORIGIN_ATTRIBUTE}]`)?.getAttribute(HOST_ORIGIN_ATTRIBUTE),
-  );
+  return parseOrigin(hostOriginAttribute(document));
 }
 
 export interface AgentOptions {
-  /** The origin of the host page. Messages go nowhere else. */
-  hostOrigin: string | null;
+  /**
+   * The origin of the host page, or the origins it may be on (one string with
+   * several separated by white space, or a list). Messages go nowhere else.
+   */
+  hostOrigin: string | readonly string[] | null;
   /** The page's window. */
   window?: Window;
   /** Where `ready` is posted; the page's parent window. */
@@ -62,12 +92,12 @@ export class PanelAgent {
   #disposed = false;
   readonly #window: Window;
   readonly #parent: Window;
-  readonly #hostOrigin: string;
+  readonly #hostOrigins: readonly string[];
 
-  constructor(window: Window, parent: Window, hostOrigin: string) {
+  constructor(window: Window, parent: Window, hostOrigins: readonly string[]) {
     this.#window = window;
     this.#parent = parent;
-    this.#hostOrigin = hostOrigin;
+    this.#hostOrigins = hostOrigins;
     // Before the page's scripts, like the capture's focus and pointer capture.
     emulateAnimationFrames(window as FrameWindow);
     this.#stopLinks = interceptLinks(window as FrameWindow, (url) =>
@@ -84,7 +114,8 @@ export class PanelAgent {
     window.addEventListener("message", this.#onWindowMessage);
     window.addEventListener(PAGE_MESSAGE_EVENT, this.#onPageMessage);
     const ready: ReadyMessage = { type: "ready", version: PROTOCOL_VERSION };
-    parent.postMessage(ready, hostOrigin);
+    // To each origin the host may be on: only the one the parent is on receives it.
+    for (const origin of hostOrigins) parent.postMessage(ready, origin);
   }
 
   get connected(): boolean {
@@ -101,7 +132,7 @@ export class PanelAgent {
   }
 
   readonly #onWindowMessage = (event: MessageEvent) => {
-    if (event.source !== this.#parent || event.origin !== this.#hostOrigin) return;
+    if (event.source !== this.#parent || !this.#hostOrigins.includes(event.origin)) return;
     const connect = parseConnect(event.data);
     const port = event.ports[0];
     if (!connect || !port) return;
@@ -163,7 +194,7 @@ export class PanelAgent {
 export function startAgent(options: AgentOptions): PanelAgent | null {
   const window = options.window ?? globalThis.window;
   const parent = options.parent === undefined ? window.parent : options.parent;
-  const hostOrigin = parseOrigin(options.hostOrigin);
-  if (!hostOrigin || !parent || parent === window) return null;
-  return new PanelAgent(window, parent, hostOrigin);
+  const hostOrigins = parseOrigins(options.hostOrigin);
+  if (!hostOrigins || !parent || parent === window) return null;
+  return new PanelAgent(window, parent, hostOrigins);
 }
