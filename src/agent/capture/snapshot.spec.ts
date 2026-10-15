@@ -426,6 +426,27 @@ describe("what the browser draws outside the page", () => {
     expect(copy.getElementById("plain")!.hasAttribute("style")).toBe(false);
   });
 
+  it("does not embed, nor fetch, an image more than a viewport out of view: a transparent pixel at its size", () => {
+    document.body.innerHTML = `<style>img { width: 240px; height: 150px }</style>
+      <img id="near" src="near.jpg" alt="" /><img id="far" src="far.jpg" alt="" />`;
+    // jsdom lays nothing out: the viewport is 1024x768, the far image three viewports down.
+    const at = (top: number) => () => new DOMRect(0, top, 240, 150);
+    document.getElementById("near")!.getBoundingClientRect = at(1200);
+    document.getElementById("far")!.getBoundingClientRect = at(3 * 768);
+    const fetched: string[] = [];
+    const copy = snapshot({
+      inlineImage: (url) => (fetched.push(url), "data:image/png;base64,AA=="),
+    });
+    expect(fetched).toEqual([new URL("near.jpg", location.href).href]);
+    expect(copy.getElementById("near")!.getAttribute("src")).toBe("data:image/png;base64,AA==");
+    const far = copy.getElementById("far") as HTMLElement;
+    expect(far.getAttribute("src")).toMatch(/^data:image\/gif;base64,/);
+    expect([far.style.getPropertyValue("width"), far.style.getPropertyValue("height")]).toEqual([
+      "240px",
+      "150px",
+    ]);
+  });
+
   it("encodes a video's frame again only when it changed (a paused video is not encoded on every frame)", () => {
     document.body.innerHTML = `<video id="clip"></video>`;
     const video = document.querySelector<HTMLVideoElement>("#clip")!;
