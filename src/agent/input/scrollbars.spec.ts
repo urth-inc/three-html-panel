@@ -1,12 +1,6 @@
-// @vitest-environment jsdom
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { InputSynthesizer } from "./input";
 import { scrollbarAt, scrollbarsOf } from "./scrollbars";
-
-beforeAll(() => {
-  // jsdom has no PointerEvent.
-  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
-});
 
 /**
  * A scroll container laid out at (10, 20), 200×100, with 400px of content.

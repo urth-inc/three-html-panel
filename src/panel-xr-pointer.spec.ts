@@ -1,14 +1,6 @@
-import {
-  EventDispatcher,
-  Group,
-  Mesh,
-  PlaneGeometry,
-  Vector2,
-  type Ray,
-  type WebGLRenderer,
-} from "three";
+import { EventDispatcher, Group, Mesh, PlaneGeometry, Vector2, type WebGLRenderer } from "three";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { HtmlPanel } from "./html-panel";
+import { HtmlPanel } from "./html-panel";
 import { PanelXRPointer } from "./panel-xr-pointer";
 
 /** A 1x1 panel at the origin, facing +z, with its input methods recorded. */
@@ -22,15 +14,11 @@ function fakePanel() {
     blur: vi.fn(() => calls.push(["blur"])),
     uvFromRay: () => new Vector2(0.5, 0.5),
     pageDistance: () => 0,
-    // As HtmlPanel's, without its clamp.
-    slopFor(this: HtmlPanel, uv: Vector2, rays: readonly Ray[]) {
-      let slop: number | undefined;
-      for (const ray of rays) {
-        const moved = this.uvFromRay(ray);
-        if (moved) slop = Math.max(slop ?? 0, this.pageDistance(uv, moved));
-      }
-      return slop;
-    },
+    // HtmlPanel's own, on a page 1000 px square: clamped at 100 px, more than the tests' slops.
+    // oxlint-disable-next-line typescript/unbound-method -- called as the fake panel's method
+    slopFor: HtmlPanel.prototype.slopFor,
+    pageWidth: 1000,
+    pageHeight: 1000,
   });
   mesh.updateMatrixWorld();
   return mesh as HtmlPanel & { calls: unknown[][] };

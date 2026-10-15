@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { InteractionMarks } from "./interaction-marks";
 

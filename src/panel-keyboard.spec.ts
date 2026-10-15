@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PanelKeyboard, type KeyboardTarget } from "./panel-keyboard";
 
@@ -22,6 +21,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** A target that does nothing, but for what `overrides` give it. */
+function fakeTarget<T extends Partial<KeyboardTarget>>(overrides?: T): KeyboardTarget & T {
+  return {
+    sendKey: () => {},
+    selectedText: () => "",
+    cut: () => {},
+    sendText: () => {},
+    sendComposition: () => {},
+    blurFromHost: () => {},
+    ...overrides,
+  } as KeyboardTarget & T;
+}
+
 /** The page focuses something: focus moves to the iframe, and the host's window gets blur. */
 function pageTakesFocus(): void {
   frame.focus();
@@ -30,15 +42,15 @@ function pageTakesFocus(): void {
 }
 
 describe("a panel iframe that takes focus", () => {
+  beforeEach(() => keyboard.register(frame, { sandboxed: true }));
+
   it("gives it back to where focus was in the host, when sandboxed", () => {
-    keyboard.register(frame, { sandboxed: true });
     hostInput.focus();
     pageTakesFocus();
     expect(document.activeElement).toBe(hostInput);
   });
 
   it("gives it back at once when only focusout tells (Firefox does not blur the host's window)", async () => {
-    keyboard.register(frame, { sandboxed: true });
     hostInput.focus();
     vi.useRealTimers();
     frame.focus();
@@ -48,7 +60,6 @@ describe("a panel iframe that takes focus", () => {
   });
 
   it("loses it when sandboxed and there is nowhere to give it back to", () => {
-    keyboard.register(frame, { sandboxed: true });
     hostInput.remove();
     const blur = vi.spyOn(frame, "blur");
     pageTakesFocus();
@@ -57,15 +68,7 @@ describe("a panel iframe that takes focus", () => {
   });
 
   it("gives it to the hidden field while a panel is being typed into", () => {
-    keyboard.register(frame, { sandboxed: true });
-    const target: KeyboardTarget = {
-      sendKey: () => {},
-      selectedText: () => "",
-      cut: () => {},
-      sendText: () => {},
-      sendComposition: () => {},
-      blurFromHost: () => {},
-    };
+    const target = fakeTarget();
     keyboard.focus(target);
     pageTakesFocus();
     const active = document.activeElement;
@@ -82,15 +85,11 @@ describe("IME composition", () => {
   beforeEach(() => {
     vi.useRealTimers();
     const calls: unknown[][] = [];
-    target = {
+    target = fakeTarget({
       calls,
-      sendKey: () => {},
-      selectedText: () => "",
-      cut: () => {},
       sendText: (text) => calls.push(["text", text]),
       sendComposition: (text, cursor) => calls.push(["composition", text, cursor]),
-      blurFromHost: () => {},
-    };
+    });
     keyboard.focus(target);
   });
 
@@ -153,14 +152,7 @@ describe("soft keyboards", () => {
   });
 
   it("shows only for a target that takes text, not keys alone (a button in the page)", () => {
-    const target: KeyboardTarget = {
-      sendKey: () => {},
-      selectedText: () => "",
-      cut: () => {},
-      sendText: () => {},
-      sendComposition: () => {},
-      blurFromHost: () => {},
-    };
+    const target = fakeTarget();
     expect(field().getAttribute("inputmode")).toBe("none");
     keyboard.focus(target, false);
     expect(document.activeElement).toBe(field());
@@ -183,14 +175,7 @@ describe("soft keyboards", () => {
   });
 
   describe("a tap on a field that has focus already", () => {
-    const target: KeyboardTarget = {
-      sendKey: () => {},
-      selectedText: () => "",
-      cut: () => {},
-      sendText: () => {},
-      sendComposition: () => {},
-      blurFromHost: () => {},
-    };
+    const target = fakeTarget();
     // jsdom has no visual viewport: one a soft keyboard shrinks, as browsers do.
     const viewport = Object.assign(new EventTarget(), { width: 400, height: 800, scale: 1 });
     const resize = (height: number) => {
@@ -271,14 +256,7 @@ describe("soft keyboards", () => {
   it("turns Backspace and Enter that only show in beforeinput into keys", () => {
     vi.useRealTimers();
     const keys: string[] = [];
-    const target: KeyboardTarget = {
-      sendKey: (event) => keys.push(event.key),
-      selectedText: () => "",
-      cut: () => {},
-      sendText: () => {},
-      sendComposition: () => {},
-      blurFromHost: () => {},
-    };
+    const target = fakeTarget({ sendKey: (event) => keys.push(event.key) });
     keyboard.focus(target);
     for (const inputType of ["deleteContentBackward", "insertLineBreak", "insertText"]) {
       field().dispatchEvent(new InputEvent("beforeinput", { inputType, cancelable: true }));
@@ -291,16 +269,13 @@ describe("soft keyboards", () => {
 describe("copy, cut and undo", () => {
   const field = () => document.querySelector<HTMLTextAreaElement>("textarea[aria-hidden]")!;
   let selected: string;
-  const target: KeyboardTarget & { keys: string[]; cuts: number } = {
-    keys: [],
+  const target: KeyboardTarget & { keys: string[]; cuts: number } = fakeTarget({
+    keys: [] as string[],
     cuts: 0,
     sendKey: (event) => target.keys.push(event.key),
     selectedText: () => selected,
     cut: () => target.cuts++,
-    sendText: () => {},
-    sendComposition: () => {},
-    blurFromHost: () => {},
-  };
+  });
 
   beforeEach(() => {
     vi.useRealTimers();

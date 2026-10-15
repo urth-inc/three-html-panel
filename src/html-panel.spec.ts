@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import {
   PerspectiveCamera,
   Ray,
@@ -18,14 +17,60 @@ import {
   PANEL_SANDBOX,
   REST_AFTER_MS,
   defaultPixelRatio,
+  type HtmlPanelOptions,
 } from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
+import { delivered } from "./test-helpers";
 
 // To count how often the panel reads its caret's color.
 vi.mock("./css-color", async (importOriginal) => {
   const original = await importOriginal<typeof import("./css-color")>();
   return { ...original, parseCssColor: vi.fn(original.parseCssColor) };
 });
+
+/** Connects the panel as its agent would, and returns the agent's end of the port. */
+function connect(panel: HtmlPanel): MessagePort {
+  const postMessage = vi.fn();
+  panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage;
+  const event = new MessageEvent("message", {
+    data: { type: "ready", version: 1 },
+    origin: panel.sandboxed ? "null" : "https://panel.example",
+  });
+  Object.defineProperty(event, "source", { value: panel.iframe.contentWindow });
+  window.dispatchEvent(event);
+  return (postMessage.mock.calls[0]![2] as MessagePort[])[0]!;
+}
+
+/** The page reporting a focused text field with its caret. */
+const editing = {
+  type: "editing",
+  editing: true,
+  caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" },
+  selectedText: "",
+  pointers: 0,
+  typing: true,
+};
+
+/** A renderer drawing into an 800x600 canvas. */
+const rendererWith = (pixelRatio = 1, domElement = document.createElement("canvas")) =>
+  ({
+    domElement,
+    getSize: (size: Vector2) => size.set(800, 600),
+    getPixelRatio: () => pixelRatio,
+  }) as unknown as WebGLRenderer;
+
+/**
+ * A 90° camera over an 800x600 canvas, at `z` in front of the panel (at the
+ * origin, facing +z) or behind it, looking at it. An 800x600 page, 1 unit wide,
+ * is drawn at 0.375 / z screen px per page px.
+ */
+const cameraAt = (z: number) => {
+  const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100);
+  camera.position.set(0, 0, z);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  return camera;
+};
 
 describe("defaultPixelRatio", () => {
   it("is 1 on phones (coarse pointer, small screen) and 2 elsewhere", () => {
@@ -74,13 +119,18 @@ describe("the panel's iframe", () => {
     for (const panel of panels.splice(0)) panel.dispose();
   });
 
-  const open = (sandbox?: boolean, keyboard?: PanelKeyboard) => {
+  const open = (
+    sandbox?: boolean,
+    keyboard?: PanelKeyboard,
+    options?: Partial<HtmlPanelOptions>,
+  ) => {
     sandboxAtSrc = [];
     const panel = new HtmlPanel({
       url: "https://panel.example/page/",
       sandbox,
       keyboard,
       readyTimeout: 60_000,
+      ...options,
     });
     panels.push(panel);
     return panel;
@@ -91,8 +141,6 @@ describe("the panel's iframe", () => {
     expect(sandboxAtSrc).toEqual([PANEL_SANDBOX]);
     const tokens = panel.iframe.getAttribute("sandbox")!.split(/\s+/);
     expect(tokens).toEqual(["allow-scripts", "allow-forms", "allow-popups"]);
-    expect(tokens).not.toContain("allow-same-origin");
-    expect(tokens).not.toContain("allow-popups-to-escape-sandbox");
   });
 
   it("draws at 1x on phones, by default", () => {
@@ -135,28 +183,6 @@ describe("the panel's iframe", () => {
   });
 
   describe("a page that focuses a text field on its own", () => {
-    /** Connects the panel as its agent would, and returns the agent's end of the port. */
-    function connect(panel: HtmlPanel): MessagePort {
-      const postMessage = vi.fn();
-      panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage;
-      const event = new MessageEvent("message", {
-        data: { type: "ready", version: 1 },
-        origin: panel.sandboxed ? "null" : "https://panel.example",
-      });
-      Object.defineProperty(event, "source", { value: panel.iframe.contentWindow });
-      window.dispatchEvent(event);
-      return (postMessage.mock.calls[0]![2] as MessagePort[])[0]!;
-    }
-    const editing = {
-      type: "editing",
-      editing: true,
-      caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" },
-      selectedText: "",
-      pointers: 0,
-      typing: true,
-    };
-    const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
-
     it("draws the caret in the page's color and alpha, whatever syntax the page wrote it in", async () => {
       const panel = open(false);
       const port = connect(panel);
@@ -387,14 +413,7 @@ describe("the panel's iframe", () => {
 
     it("opens a link the page hands over only right after the user acted on the panel, and only http(s)", async () => {
       const onLink = vi.fn();
-      sandboxAtSrc = [];
-      const panel = new HtmlPanel({
-        url: "https://panel.example/page/",
-        sandbox: false,
-        onLink,
-        readyTimeout: 60_000,
-      });
-      panels.push(panel);
+      const panel = open(false, undefined, { onLink });
       const port = connect(panel);
       // On its own: ignored.
       port.postMessage({ type: "open", url: "https://example.com/" });
@@ -412,12 +431,7 @@ describe("the panel's iframe", () => {
 
     it("counts a key the user pressed in the panel (Enter on a focused link) as acting on it", async () => {
       const onLink = vi.fn();
-      const panel = new HtmlPanel({
-        url: "https://panel.example/page/",
-        onLink,
-        readyTimeout: 60_000,
-      });
-      panels.push(panel);
+      const panel = open(undefined, undefined, { onLink });
       const port = connect(panel);
       panel.sendKey(new KeyboardEvent("keydown", { key: "Enter" }));
       port.postMessage({ type: "open", url: "https://example.com/" });
@@ -577,36 +591,15 @@ describe("the panel's iframe", () => {
     const panel = open(false, keyboard);
     // A 1x1 panel facing a camera 1 unit in front of it.
     panel.updateMatrixWorld();
-    const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 10);
-    camera.position.set(0, 0, 1);
-    camera.updateMatrixWorld();
+    const camera = cameraAt(1);
     const canvas = document.createElement("canvas");
     canvas.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
-    const renderer = {
-      domElement: canvas,
-      getSize: (size: Vector2) => size.set(800, 600),
-      getPixelRatio: () => 1,
-    } as unknown as WebGLRenderer;
+    const renderer = rendererWith(1, canvas);
 
-    const postMessage = vi.fn();
-    panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage;
-    const ready = new MessageEvent("message", {
-      data: { type: "ready", version: 1 },
-      origin: "https://panel.example",
-    });
-    Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow });
-    window.dispatchEvent(ready);
-    const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!;
+    const port = connect(panel);
     // The page's default size is 800x600: a caret at its centre.
-    port.postMessage({
-      type: "editing",
-      editing: true,
-      caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" },
-      selectedText: "",
-      pointers: 0,
-      typing: true,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    port.postMessage({ ...editing, caret: { ...editing.caret, x: 400, y: 290, height: 20 } });
+    await delivered();
 
     panel.onBeforeRender(renderer, new Scene(), camera);
     expect(placeIme).toHaveBeenCalledTimes(1);
@@ -638,34 +631,13 @@ describe("the panel's iframe", () => {
   });
 
   describe("while it is not drawn", () => {
-    const renderer = {
-      domElement: document.createElement("canvas"),
-      getSize: (size: Vector2) => size.set(800, 600),
-      getPixelRatio: () => 1,
-    } as unknown as WebGLRenderer;
-    /** A camera 1 unit in front of the panel (at the origin, facing +z), or behind it. */
-    const cameraAt = (z: number) => {
-      const camera = new PerspectiveCamera(90, 1, 0.01, 10);
-      camera.position.set(0, 0, z);
-      camera.lookAt(0, 0, 0);
-      camera.updateMatrixWorld();
-      return camera;
-    };
+    const renderer = rendererWith();
     const front = cameraAt(1);
     const behind = cameraAt(-1);
-    const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
 
     /** Connects the panel as its page would; returns the page's port and what the host sends it. */
-    const connect = (panel: HtmlPanel) => {
-      const postMessage = vi.fn();
-      panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage;
-      const ready = new MessageEvent("message", {
-        data: { type: "ready", version: 1 },
-        origin: "https://panel.example",
-      });
-      Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow });
-      window.dispatchEvent(ready);
-      const port = (postMessage.mock.calls.at(-1)![2] as MessagePort[])[0]!;
+    const connectWatching = (panel: HtmlPanel) => {
+      const port = connect(panel);
       const visibility: unknown[] = [];
       port.onmessage = (event) => {
         if (event.data.type === "visibility") visibility.push(event.data.visible);
@@ -681,7 +653,7 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      const { port, visibility } = connect(panel);
+      const { port, visibility } = connectWatching(panel);
       const draw = (camera: PerspectiveCamera, times: number) => {
         for (let i = 0; i < times; i++) {
           panel.onBeforeRender(renderer, new Scene(), camera);
@@ -708,7 +680,7 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      const { port } = connect(panel);
+      const { port } = connectWatching(panel);
       const release = vi.spyOn(
         (panel as unknown as { renderer: FrameRenderer }).renderer,
         "release",
@@ -729,10 +701,10 @@ describe("the panel's iframe", () => {
     it("tells a page that connects while it is not drawn", async () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
-      connect(panel).port.close();
+      connectWatching(panel).port.close();
       vi.advanceTimersByTime(1500);
       // The page navigated: a new document connects.
-      const { port, visibility } = connect(panel);
+      const { port, visibility } = connectWatching(panel);
       await delivered();
       expect(visibility).toEqual([false]);
       port.close();
@@ -740,13 +712,8 @@ describe("the panel's iframe", () => {
 
     it("leaves the page alone with pauseWhenHidden off", async () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
-      const panel = new HtmlPanel({
-        url: "https://panel.example/page/",
-        readyTimeout: 60_000,
-        pauseWhenHidden: false,
-      });
-      panels.push(panel);
-      const { port, visibility } = connect(panel);
+      const panel = open(undefined, undefined, { pauseWhenHidden: false });
+      const { port, visibility } = connectWatching(panel);
       vi.advanceTimersByTime(5000);
       await delivered();
       expect(visibility).toEqual([]);
@@ -755,30 +722,10 @@ describe("the panel's iframe", () => {
   });
 
   describe("drawn small", () => {
-    // An 800x600 page, 1 unit wide; a 90° camera over an 800x600 canvas: at a
-    // distance d, it is drawn at 0.375 / d screen px per page px.
-    const renderer = {
-      domElement: document.createElement("canvas"),
-      getSize: (size: Vector2) => size.set(800, 600),
-      getPixelRatio: () => 1,
-    } as unknown as WebGLRenderer;
-    const cameraAt = (z: number) => {
-      const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100);
-      camera.position.set(0, 0, z);
-      camera.updateMatrixWorld();
-      return camera;
-    };
-    const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
-    const connect = (panel: HtmlPanel) => {
-      const postMessage = vi.fn();
-      panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage;
-      const ready = new MessageEvent("message", {
-        data: { type: "ready", version: 1 },
-        origin: "https://panel.example",
-      });
-      Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow });
-      window.dispatchEvent(ready);
-      const port = (postMessage.mock.calls.at(-1)![2] as MessagePort[])[0]!;
+    // At a distance d, the panel is drawn at 0.375 / d screen px per page px (see cameraAt).
+    const renderer = rendererWith();
+    const connectWatching = (panel: HtmlPanel) => {
+      const port = connect(panel);
       const paces: number[] = [];
       port.onmessage = (event) => {
         if (event.data.type === "pace") paces.push(event.data.intervalMs);
@@ -794,7 +741,7 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      const { port, paces } = connect(panel);
+      const { port, paces } = connectWatching(panel);
       /** Draws the panel from these distances, then lets the panel decide. */
       const frame = async (...distances: number[]) => {
         for (const z of distances) panel.onBeforeRender(renderer, new Scene(), cameraAt(z));
@@ -826,7 +773,7 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      const { port, paces } = connect(panel);
+      const { port, paces } = connectWatching(panel);
       for (let i = 0; i < 8; i++) {
         panel.onBeforeRender(renderer, new Scene(), cameraAt(1));
         panel.onBeforeRender(renderer, new Scene(), cameraAt(4));
@@ -841,7 +788,7 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      const { port, paces } = connect(panel);
+      const { port, paces } = connectWatching(panel);
       // Near over the whole 800x600 canvas (0.375), but this eye draws into 400x300 of it: 0.19.
       const eye = Object.assign(cameraAt(1), { viewport: new Vector4(0, 0, 400, 300) });
       panel.onBeforeRender(renderer, new Scene(), eye);
@@ -855,10 +802,10 @@ describe("the panel's iframe", () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
       const panel = open();
       panel.updateMatrixWorld();
-      connect(panel).port.close();
+      connectWatching(panel).port.close();
       panel.onBeforeRender(renderer, new Scene(), cameraAt(3));
       vi.advanceTimersByTime(250);
-      const { port, paces } = connect(panel);
+      const { port, paces } = connectWatching(panel);
       await delivered();
       expect(paces).toEqual([FAR_PACE_MS]);
       port.close();
@@ -866,19 +813,7 @@ describe("the panel's iframe", () => {
   });
 
   describe("the texture's resolution", () => {
-    const rendererWith = (pixelRatio: number) =>
-      ({
-        domElement: document.createElement("canvas"),
-        getSize: (size: Vector2) => size.set(800, 600),
-        getPixelRatio: () => pixelRatio,
-      }) as unknown as WebGLRenderer;
-    // As in "drawn small": at a distance d, drawn at 0.375 / d screen px per page px.
-    const cameraAt = (z: number) => {
-      const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100);
-      camera.position.set(0, 0, z);
-      camera.updateMatrixWorld();
-      return camera;
-    };
+    // At a distance d, drawn at 0.375 / d screen px per page px (see cameraAt).
     /** The panel's texture width (the page is 800 CSS px wide, drawn at pixelRatio 2 at most). */
     const textureWidth = (panel: HtmlPanel) =>
       (panel as unknown as { renderer: { canvas: HTMLCanvasElement } }).renderer.canvas.width;

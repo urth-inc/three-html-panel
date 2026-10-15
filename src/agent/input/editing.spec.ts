@@ -9,15 +9,7 @@ import {
   type FieldState,
   type KeyInput,
 } from "./editing";
-
-const key = (k: string, modifiers: Partial<Omit<KeyInput, "key">> = {}): KeyInput => ({
-  key: k,
-  shiftKey: false,
-  ctrlKey: false,
-  altKey: false,
-  metaKey: false,
-  ...modifiers,
-});
+import { keyInput as key } from "./test-input";
 
 /** A field from a string with "|" for the caret, or "[" and "]" around the selection ("]" first if backward). */
 function field(marked: string, multiline = true): FieldState {

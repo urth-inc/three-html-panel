@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { pageStylesheets, parseInto } from "./css";
 import { hasTransition, LiveInteractionCss } from "./live-css";

@@ -1,7 +1,7 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite-plus/test";
-import { PanelConnection } from "./panel-connection";
+import { PanelConnection, type PanelConnectionOptions } from "./panel-connection";
 import { PROTOCOL_VERSION } from "./protocol";
+import { delivered } from "./test-helpers";
 
 const ORIGIN = "https://panel.example";
 
@@ -36,8 +36,18 @@ function pagePort(call = -1): MessagePort {
   return transfer[0];
 }
 
-/** Lets messages sent through ports arrive. */
-const delivered = () => new Promise((resolve) => setTimeout(resolve, 10));
+/** Replaces the connection with a new one for the iframe, with `extra` options. */
+function replaceConnection(extra: Partial<PanelConnectionOptions> = {}): void {
+  connection?.dispose();
+  connection = new PanelConnection({
+    iframe,
+    origin: ORIGIN,
+    width: 800,
+    height: 600,
+    ...options,
+    ...extra,
+  });
+}
 
 const frame = (seq: number, fields: Record<string, unknown> = {}) => ({
   type: "frame",
@@ -63,14 +73,7 @@ beforeEach(() => {
     onMessage: vi.fn(),
     onError: vi.fn(),
   };
-  connection = new PanelConnection({
-    iframe,
-    origin: ORIGIN,
-    width: 800,
-    height: 600,
-    readyTimeout: 1000,
-    ...options,
-  });
+  replaceConnection({ readyTimeout: 1000 });
 });
 
 afterEach(() => {
@@ -123,17 +126,7 @@ describe("ready", () => {
 
 describe("ready with a sandbox", () => {
   /** Replaces the connection with one for a sandboxed iframe (or not). */
-  function connectionFor(sandboxed: boolean): void {
-    connection.dispose();
-    connection = new PanelConnection({
-      iframe,
-      origin: ORIGIN,
-      sandboxed,
-      width: 800,
-      height: 600,
-      ...options,
-    });
-  }
+  const connectionFor = (sandboxed: boolean) => replaceConnection({ sandboxed });
 
   it('accepts ready from the sandboxed iframe\'s opaque origin, and addresses connect to it with "*"', () => {
     connectionFor(true);
@@ -232,7 +225,7 @@ describe("port messages", () => {
     const second = pagePort();
     first.postMessage({ type: "app", data: "stale" });
     second.postMessage({ type: "app", data: "fresh" });
-    await delivered();
+    await delivered(10);
     expect(options.onMessage.mock.calls).toEqual([["fresh"]]);
     expect(options.onConnect).toHaveBeenCalledTimes(2);
   });
@@ -240,10 +233,10 @@ describe("port messages", () => {
   it("starts seq over with each connection", async () => {
     ready();
     pagePort().postMessage(frame(7));
-    await delivered();
+    await delivered(10);
     ready();
     pagePort().postMessage(frame(0));
-    await delivered();
+    await delivered(10);
     expect(options.onFrame).toHaveBeenCalledTimes(2);
   });
 
@@ -254,7 +247,7 @@ describe("port messages", () => {
     const received: unknown[] = [];
     port.onmessage = (event) => received.push(event.data);
     connection.send({ type: "blur" });
-    await delivered();
+    await delivered(10);
     expect(received).toEqual([{ type: "blur" }]);
     expect(postToFrame).toHaveBeenCalledTimes(1);
   });
@@ -263,15 +256,7 @@ describe("port messages", () => {
 describe("timeout", () => {
   it("reports an error if no agent says ready in time", () => {
     vi.useFakeTimers();
-    connection.dispose();
-    connection = new PanelConnection({
-      iframe,
-      origin: ORIGIN,
-      width: 800,
-      height: 600,
-      readyTimeout: 1000,
-      ...options,
-    });
+    replaceConnection({ readyTimeout: 1000 });
     vi.advanceTimersByTime(999);
     expect(options.onError).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -281,15 +266,7 @@ describe("timeout", () => {
   /** Fakes only the timeout's timers, so that ports still deliver. */
   function withTimeoutTimers(): void {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    connection.dispose();
-    connection = new PanelConnection({
-      iframe,
-      origin: ORIGIN,
-      width: 800,
-      height: 600,
-      readyTimeout: 1000,
-      ...options,
-    });
+    replaceConnection({ readyTimeout: 1000 });
   }
   const portDelivery = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -350,15 +327,7 @@ describe("timeout", () => {
 });
 
 it("sends the hover opt-out on every connection", () => {
-  connection.dispose();
-  connection = new PanelConnection({
-    iframe,
-    origin: ORIGIN,
-    width: 800,
-    height: 600,
-    ...options,
-    optimizeHover: false,
-  });
+  replaceConnection({ optimizeHover: false });
   ready();
   ready();
   expect(postToFrame).toHaveBeenCalledTimes(2);

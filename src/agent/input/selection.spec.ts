@@ -1,49 +1,22 @@
-// @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { FrameWindow } from "../../types";
 import { InputSynthesizer } from "./input";
 import { measureCaret } from "./caret";
+import { eventsWithoutView, stubContentEditable, stubRangeRects } from "../../test-helpers";
+import { keyInput, pressFarAway, type Modifiers, wheelWithoutView } from "./test-input";
 import { caretAtPoint, clipCaret, selectedText, selectionBoxes, visibleBoxOf } from "./selection";
-
-// jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
-// Window); events are made here without it.
-beforeAll(() => {
-  type EventClass = new (type: string, init?: EventInit) => Event;
-  const withoutView = (Base: EventClass) =>
-    class extends Base {
-      constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-        const { view: _view, ...rest } = init;
-        super(type, rest);
-      }
-    };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
-  globalThis.WheelEvent = withoutView(WheelEvent as EventClass) as unknown as typeof WheelEvent;
-});
 
 let input: InputSynthesizer;
 const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
 
-/** Gives Range a getClientRects (jsdom has none) for a test; returns what undoes it. */
-function stubRangeRects(rects: () => DOMRectList): () => void {
-  const before = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
-  Range.prototype.getClientRects = rects;
-  return () => {
-    if (before) Object.defineProperty(Range.prototype, "getClientRects", before);
-    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
-  };
-}
-
 beforeAll(() => {
+  eventsWithoutView();
+  wheelWithoutView();
   input = new InputSynthesizer(document, { measure: (run) => run(), onChange: () => {} });
 });
 
 afterEach(() => {
-  // A press far away, so that the next test's first press is not a double one.
-  input.handle({ type: "pointer", kind: "down", x: 5000, y: 5000 });
-  input.handle({ type: "pointer", kind: "up", x: 5000, y: 5000 });
+  pressFarAway(input);
   input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
   input.handle({ type: "blur" });
   vi.restoreAllMocks();
@@ -71,19 +44,8 @@ const click = (x: number, y: number) => {
   pointer("down", x, y);
   pointer("up", x, y);
 };
-const key = (
-  key: string,
-  modifiers: Partial<Record<"shiftKey" | "ctrlKey" | "altKey" | "metaKey", boolean>> = {},
-) =>
-  input.handle({
-    type: "key",
-    key,
-    shiftKey: false,
-    ctrlKey: false,
-    altKey: false,
-    metaKey: false,
-    ...modifiers,
-  });
+const key = (key: string, modifiers?: Modifiers) =>
+  input.handle({ type: "key", ...keyInput(key, modifiers) });
 
 describe("selecting the page's text", () => {
   let first: HTMLParagraphElement;
@@ -243,23 +205,14 @@ describe("editing a contenteditable element", () => {
   beforeEach(() => {
     document.body.innerHTML = `<div id="editor" contenteditable="true"><p>hello world</p></div>`;
     editor = document.querySelector("#editor")!;
-    // jsdom has neither isContentEditable nor execCommand.
-    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.closest("[contenteditable=true]") !== null;
-      },
-    });
+    // jsdom has neither execCommand nor isContentEditable (stubbed until the test ends).
     commands = [];
     document.execCommand = (command: string, _ui?: boolean, value?: string) => {
       commands.push([command, value]);
       return true;
     };
     layOut(editor.querySelector("p")!);
-  });
-
-  afterEach(() => {
-    delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
+    return stubContentEditable();
   });
 
   it("focuses the editable on a press, with the caret where it was pressed", () => {

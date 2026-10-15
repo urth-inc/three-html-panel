@@ -1,32 +1,8 @@
-// @vitest-environment jsdom
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { eventsWithoutView } from "../../test-helpers";
 import { InputSynthesizer } from "./input";
 import { isUsable, optionAt, selectRange, stepOption } from "./list-box";
-
-// jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
-// Window); events are made here without it.
-beforeAll(() => {
-  type EventClass = new (type: string, init?: EventInit) => Event;
-  const withoutView = (Base: EventClass) =>
-    class extends Base {
-      constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-        const { view: _view, ...rest } = init;
-        super(type, rest);
-      }
-    };
-  vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
-  vi.stubGlobal("PointerEvent", withoutView((globalThis.PointerEvent ?? MouseEvent) as EventClass));
-});
-afterAll(() => vi.unstubAllGlobals());
+import { keyInput, pressFarAway, type Modifiers } from "./test-input";
 
 let select: HTMLSelectElement;
 let changes: number;
@@ -85,6 +61,7 @@ describe("choosing options in the panel", () => {
   let target: Element;
 
   beforeAll(() => {
+    eventsWithoutView();
     input = new InputSynthesizer(document, { measure: (run) => run(), onChange: () => {} });
   });
   beforeEach(() => {
@@ -92,9 +69,7 @@ describe("choosing options in the panel", () => {
     document.elementFromPoint = () => target;
   });
   afterEach(() => {
-    // A press far away, so that the next test's first press is not a double one.
-    input.handle({ type: "pointer", kind: "down", x: 5000, y: 5000 });
-    input.handle({ type: "pointer", kind: "up", x: 5000, y: 5000 });
+    pressFarAway(input);
     input.handle({ type: "blur" });
   });
 
@@ -102,16 +77,8 @@ describe("choosing options in the panel", () => {
     input.handle({ type: "pointer", kind: "down", x: 50, y, ...modifiers });
     input.handle({ type: "pointer", kind: "up", x: 50, y, ...modifiers });
   };
-  const key = (key: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean } = {}) =>
-    input.handle({
-      type: "key",
-      key,
-      shiftKey: false,
-      ctrlKey: false,
-      altKey: false,
-      metaKey: false,
-      ...modifiers,
-    });
+  const key = (key: string, modifiers?: Modifiers) =>
+    input.handle({ type: "key", ...keyInput(key, modifiers) });
 
   it("selects only the option pressed, and tells the page once", () => {
     press(105);

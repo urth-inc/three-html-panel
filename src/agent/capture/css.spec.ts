@@ -16,42 +16,9 @@ import {
 } from "./css";
 
 describe("rewriteSelector", () => {
-  it("lets interaction pseudo-classes match their attributes, as for the live page", () => {
-    expect(rewriteSelector("a:hover, b:active")).toBe(
-      "a:is(:hover,[data-thp-hover]), b:is(:active,[data-thp-active])",
-    );
-  });
-
-  it("keeps :focus, :focus-visible and :focus-within apart", () => {
-    expect(rewriteSelector("input:focus")).toBe("input:is(:focus,[data-thp-focus])");
-    expect(rewriteSelector("input:focus-visible")).toBe(
-      "input:is(:focus-visible,[data-thp-focus-visible])",
-    );
-    expect(rewriteSelector(".card:focus-within")).toBe(
-      ".card:is(:focus-within,[data-thp-focus-within])",
-    );
-  });
-
-  it("lets an open popover and a modal dialog match their attributes (the copy is not in the top layer)", () => {
-    expect(rewriteSelector(".menu:popover-open, dialog:modal")).toBe(
-      ".menu:is(:popover-open,[data-thp-popover-open]), dialog:is(:modal,[data-thp-modal])",
-    );
-  });
-
-  it("maps :root to html", () => {
+  it("maps :root to html, and rewrites as for the live page", () => {
     expect(rewriteSelector(":root")).toBe("html");
     expect(rewriteSelector(":root:hover")).toBe("html:is(:hover,[data-thp-hover])");
-  });
-
-  it("leaves what the live page rewrote already", () => {
-    const live = liveSelector(".row:hover .tools")!;
-    expect(rewriteSelector(live)).toBe(live);
-  });
-
-  it("leaves other pseudo-classes alone", () => {
-    expect(rewriteSelector("li:hover-like, a:hovered, p:not(:first-child)")).toBe(
-      "li:hover-like, a:hovered, p:not(:first-child)",
-    );
   });
 });
 
@@ -64,6 +31,16 @@ describe("liveSelector", () => {
       "form:is(:focus-within,[data-thp-focus-within]) .hint, input:is(:focus,[data-thp-focus]), input:is(:focus-visible,[data-thp-focus-visible])",
     );
     expect(liveSelector("li:not(:hover)")).toBe("li:not(:is(:hover,[data-thp-hover]))");
+  });
+
+  it("lets an open popover and a modal dialog match their attributes (the copy is not in the top layer)", () => {
+    expect(liveSelector(".menu:popover-open, dialog:modal")).toBe(
+      ".menu:is(:popover-open,[data-thp-popover-open]), dialog:is(:modal,[data-thp-modal])",
+    );
+  });
+
+  it("leaves other pseudo-classes alone", () => {
+    expect(liveSelector("li:hover-like, a:hovered, p:not(:first-child)")).toBeNull();
   });
 
   it("leaves an interaction after a pseudo-element, which neither :is() nor an attribute may follow", () => {
@@ -79,6 +56,7 @@ describe("liveSelector", () => {
     expect(liveSelector(".row:is(:hover, [data-thp-hover]) .tools, .card:hover .menu")).toBe(
       ".row:is(:hover, [data-thp-hover]) .tools, .card:is(:hover,[data-thp-hover]) .menu",
     );
+    expect(liveSelector(liveSelector(".row:hover .tools")!)).toBeNull();
   });
 
   it("takes its rewrite out again, for the selector as the page wrote it", () => {

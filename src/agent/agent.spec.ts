@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import {
   afterEach,
   beforeAll,
@@ -15,27 +14,16 @@ import { parseOrigin, readHostOrigin, startAgent, type PanelAgent } from "./agen
 import { PageCapture } from "./capture/page-capture";
 import { RenderPacer } from "./capture/pacer";
 import { onHostMessage, sendToHost } from "./page";
+import { delivered, eventsWithoutView, stubContentEditable, stubRangeRects } from "../test-helpers";
 
 const HOST = "https://host.example";
-
-/** Gives Range a getClientRects (jsdom has none) for a test; returns what undoes it. */
-function stubRangeRects(rects: () => DOMRectList): () => void {
-  const before = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
-  Range.prototype.getClientRects = rects;
-  return () => {
-    if (before) Object.defineProperty(Range.prototype, "getClientRects", before);
-    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
-  };
-}
 
 let parent: { postMessage: Mock };
 let agent: PanelAgent | null = null;
 let channel: MessageChannel | null = null;
 
-beforeAll(() => {
-  // jsdom has no PointerEvent.
-  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
-});
+// jsdom refuses the `view` the agent gives the events it makes.
+beforeAll(eventsWithoutView);
 
 beforeEach(() => {
   parent = { postMessage: vi.fn() };
@@ -65,8 +53,6 @@ function connect(origin = HOST, source: unknown = parent, optimizeHover?: boolea
   window.dispatchEvent(event);
   return channel.port1;
 }
-
-const delivered = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 describe("starting", () => {
   it("does not start without a valid host origin, and posts nothing", () => {
@@ -137,7 +123,7 @@ describe("connecting", () => {
     const fromHost: unknown[] = [];
     const stop = onHostMessage((data) => fromHost.push(data));
     host.postMessage({ type: "app", data: "scene-click" });
-    await delivered();
+    await delivered(50);
     stop();
 
     expect(received).toContainEqual({ type: "app", data: { shape: "box" } });
@@ -153,7 +139,7 @@ describe("connecting", () => {
     const received: { type: string }[] = [];
     host.onmessage = (event) => received.push(event.data);
     host.postMessage({ type: "ping" });
-    await delivered();
+    await delivered(50);
     expect(received).toContainEqual({ type: "pong" });
   });
 
@@ -205,19 +191,8 @@ describe("connecting", () => {
 
   it("answers every tap: an editing report, counting the pointer inputs handled, follows each release", async () => {
     document.body.innerHTML = `<p>no field here</p>`;
-    // jsdom has no layout, and refuses the `view` the agent gives the events it makes.
+    // jsdom has no layout.
     document.elementFromPoint = () => document.querySelector("p");
-    const { MouseEvent: Mouse, PointerEvent: Pointer } = window;
-    window.MouseEvent = class extends Mouse {
-      constructor(type: string, init?: MouseEventInit) {
-        super(type, { ...init, view: null });
-      }
-    };
-    window.PointerEvent = class extends Pointer {
-      constructor(type: string, init?: PointerEventInit) {
-        super(type, { ...init, view: null });
-      }
-    };
     start();
     const host = connect();
     const received: { type: string; editing?: boolean; pointers?: number }[] = [];
@@ -236,8 +211,6 @@ describe("connecting", () => {
     await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 4 }));
     expect(editing().length).toBeGreaterThan(before);
     delete (document as { elementFromPoint?: unknown }).elementFromPoint;
-    window.MouseEvent = Mouse;
-    window.PointerEvent = Pointer;
   });
 
   it("offers no selection for copying when it is too long to send, rather than a part of it", async () => {
@@ -372,12 +345,7 @@ describe("connecting", () => {
     // Where the character after the caret is: the line, scrolled half out of the bottom.
     let line = new DOMRect(30, 50, 8, 20);
     const restoreRects = stubRangeRects(() => [line] as unknown as DOMRectList);
-    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.closest("[contenteditable=true]") !== null;
-      },
-    });
+    const restoreEditable = stubContentEditable();
     try {
       start();
       const host = connect();
@@ -404,7 +372,7 @@ describe("connecting", () => {
       await vi.waitFor(() => expect(lastCaret()).toBeNull());
     } finally {
       restoreRects();
-      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
+      restoreEditable();
       getSelection()!.removeAllRanges();
     }
   });
@@ -413,13 +381,7 @@ describe("connecting", () => {
     document.body.innerHTML = `<div id="editor" contenteditable="true"><p>text</p></div>`;
     const editor = document.querySelector<HTMLElement>("#editor")!;
     editor.getBoundingClientRect = () => new DOMRect(10, 20, 200, 80);
-    // jsdom has no isContentEditable.
-    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.closest("[contenteditable=true]") !== null;
-      },
-    });
+    const restoreEditable = stubContentEditable();
     try {
       start();
       const host = connect();
@@ -432,7 +394,7 @@ describe("connecting", () => {
         }),
       );
     } finally {
-      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
+      restoreEditable();
     }
   });
 
@@ -445,7 +407,7 @@ describe("connecting", () => {
     document
       .getElementById("docs")!
       .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    await delivered();
+    await delivered(50);
     expect(received).toContainEqual({ type: "open", url: "https://example.com/docs" });
   });
 
@@ -469,7 +431,7 @@ describe("connecting", () => {
   it("does not send anything before it is connected", async () => {
     start();
     sendToHost({ shape: "box" });
-    await delivered();
+    await delivered(50);
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
   });
 });
@@ -494,7 +456,7 @@ describe("frames", () => {
       const seen = captures.mock.calls.length;
       document.querySelector("#text")!.setAttribute("title", "note");
       await vi.waitFor(() => expect(captures.mock.calls.length).toBeGreaterThan(seen));
-      await delivered();
+      await delivered(50);
       expect(frames).toHaveLength(1);
       // What it shows changes: that is sent.
       (document.querySelector("#text")!.firstChild as Text).data = "world";
@@ -517,7 +479,7 @@ describe("frames", () => {
     };
     await vi.waitFor(() => expect(frames).toHaveLength(1));
     host.postMessage({ type: "visibility", visible: false });
-    await delivered();
+    await delivered(50);
     (document.querySelector("#text")!.firstChild as Text).data = "world";
     // What the host needs for input is still reported: here, an element took focus.
     document.querySelector<HTMLButtonElement>("#go")!.focus();
@@ -530,7 +492,7 @@ describe("frames", () => {
       metaKey: false,
     });
     await vi.waitFor(() => expect(editing.at(-1)).toMatchObject({ editing: true }));
-    await delivered();
+    await delivered(50);
     expect(frames).toHaveLength(1);
     host.postMessage({ type: "visibility", visible: true });
     await vi.waitFor(() => expect(frames).toHaveLength(2));
@@ -556,7 +518,7 @@ describe("frames", () => {
         timeout: 3000,
       });
       host.postMessage({ type: "visibility", visible: false });
-      await delivered();
+      await delivered(50);
       // At most the capture under way when the message came.
       const hidden = captures.mock.calls.length;
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -596,13 +558,13 @@ describe("frames", () => {
       const host = connect();
       await vi.waitFor(() => expect(at.length).toBeGreaterThan(3), { timeout: 3000 });
       host.postMessage({ type: "pace", intervalMs: 150 });
-      await delivered();
+      await delivered(50);
       const paced = at.length;
       await vi.waitFor(() => expect(at.length).toBeGreaterThan(paced + 3), { timeout: 3000 });
       // The first gap may have started before the pace came.
       expect(Math.min(...gaps(paced))).toBeGreaterThanOrEqual(145);
       host.postMessage({ type: "pace", intervalMs: 0 });
-      await delivered();
+      await delivered(50);
       const unpaced = at.length;
       await vi.waitFor(() => expect(at.length).toBeGreaterThan(unpaced + 3), { timeout: 3000 });
       expect(Math.max(...gaps(unpaced + 1))).toBeLessThan(100);
@@ -632,7 +594,7 @@ describe("frames", () => {
       start();
       const host = connect();
       host.postMessage({ type: "pace", intervalMs: 800 });
-      await delivered();
+      await delivered(50);
       // A capture under the long pace: the next one waits 800 ms.
       const seen = at.length;
       await vi.waitFor(() => expect(at.length).toBeGreaterThan(seen), { timeout: 3000 });

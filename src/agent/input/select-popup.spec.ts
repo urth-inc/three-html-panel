@@ -1,24 +1,12 @@
-// @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { InputSynthesizer } from "./input";
 import { SelectPopup } from "./select-popup";
+import { eventsWithoutView } from "../../test-helpers";
+import { keyInput, wheelWithoutView } from "./test-input";
 
-// jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
-// Window); events are made here without it.
 beforeAll(() => {
-  type EventClass = new (type: string, init?: EventInit) => Event;
-  const withoutView = (Base: EventClass) =>
-    class extends Base {
-      constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-        const { view: _view, ...rest } = init;
-        super(type, rest);
-      }
-    };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
-  globalThis.WheelEvent = withoutView(WheelEvent as EventClass) as unknown as typeof WheelEvent;
+  eventsWithoutView();
+  wheelWithoutView();
   // A 800x600 viewport.
   Object.defineProperty(document.documentElement, "clientWidth", {
     configurable: true,
@@ -140,7 +128,7 @@ describe("the list in the panel", () => {
   const pointer = (kind: "down" | "move" | "up", x: number, y: number) =>
     input.handle({ type: "pointer", kind, x, y });
   const key = (key: string, altKey = false) =>
-    input.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey, metaKey: false });
+    input.handle({ type: "key", ...keyInput(key, { altKey }) });
   const view = () => input.popupView;
   const rowY = (row: number) => view()!.box.top + 1 + row * view()!.itemHeight + 2;
 

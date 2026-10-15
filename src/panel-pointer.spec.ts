@@ -1,7 +1,6 @@
-// @vitest-environment jsdom
-import { Mesh, PerspectiveCamera, PlaneGeometry, Vector2, type Ray } from "three";
+import { Mesh, PerspectiveCamera, PlaneGeometry, Vector2 } from "three";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { HtmlPanel } from "./html-panel";
+import { HtmlPanel } from "./html-panel";
 import { PanelPointer } from "./panel-pointer";
 
 let canvas: HTMLCanvasElement;
@@ -24,15 +23,11 @@ beforeEach(() => {
     focusForTyping: vi.fn(() => true),
     uvFromRay: () => new Vector2(0.5, 0.5),
     pageDistance: () => 0,
-    // As HtmlPanel's, without its clamp.
-    slopFor(this: HtmlPanel, uv: Vector2, rays: readonly Ray[]) {
-      let slop: number | undefined;
-      for (const ray of rays) {
-        const moved = this.uvFromRay(ray);
-        if (moved) slop = Math.max(slop ?? 0, this.pageDistance(uv, moved));
-      }
-      return slop;
-    },
+    // HtmlPanel's own, on a page 1000 px square: clamped at 100 px, more than the tests' slops.
+    // oxlint-disable-next-line typescript/unbound-method -- called as the fake panel's method
+    slopFor: HtmlPanel.prototype.slopFor,
+    pageWidth: 1000,
+    pageHeight: 1000,
     cursor: "default",
     addEventListener: () => {},
     removeEventListener: () => {},
