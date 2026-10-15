@@ -43,6 +43,14 @@ import {
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+/** Keeps an image's copy at the size the image is laid out at (`style`, its computed style): its src draws at another. */
+function pinSize(copy: HTMLElement, style: CSSStyleDeclaration): void {
+  for (const property of ["width", "height"]) {
+    const value = style.getPropertyValue(property);
+    if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
+  }
+}
+
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
   "SCRIPT",
@@ -131,8 +139,8 @@ export interface ListBoxRow {
   paddingLeft: number;
 }
 
-/** Selected options of a focused list box, as browsers draw them. */
-const LIST_BOX_SELECTED = "rgb(30 110 220)";
+/** The selection's blue: selected options of a focused list box, and the highlighted item of a <select>'s list, as browsers draw them. */
+const SELECTION_BLUE = "rgb(30 110 220)";
 
 /** The last frame encoded for each video, with what it was taken at (see Snapshotter.videoFrame). */
 const videoFrames = new WeakMap<
@@ -945,10 +953,7 @@ class Snapshotter {
     // fetched. A transparent pixel at its size keeps the layout.
     if (this.#farFromView(element) && copy instanceof HTMLElement) {
       copy.setAttribute("src", TRANSPARENT_PIXEL);
-      for (const property of ["width", "height"]) {
-        const value = style.getPropertyValue(property);
-        if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
-      }
+      pinSize(copy, style);
       return;
     }
     const picked =
@@ -965,10 +970,7 @@ class Snapshotter {
     // A candidate's size is its pixels over its density (2x, or its width over
     // sizes): as a plain src, it would be drawn at its pixels. Keep the size it is laid out at.
     if (picked && copy instanceof HTMLElement) {
-      for (const property of ["width", "height"]) {
-        const value = style.getPropertyValue(property);
-        if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
-      }
+      pinSize(copy, style);
       // The fallback stands in for a candidate of another shape, maybe (a
       // <source media> for narrow screens): fit it in the box, not stretched.
       if (standIn && style.objectFit === "fill")
@@ -1732,8 +1734,6 @@ function drawScrollbars(
   }
 }
 
-const POPUP_HIGHLIGHT = "rgb(30 110 220)";
-
 /** Draws a selected option of a focused list box over its copy: white on the selection's blue, cut to the box. */
 function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
   const { shown, box } = row;
@@ -1742,7 +1742,7 @@ function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
   option.setAttribute(
     "style",
     `position:absolute;left:${box.left - shown.left}px;top:${box.top - shown.top}px;width:${box.width}px;height:${box.height}px;` +
-      `box-sizing:border-box;margin:0;border:0;padding:0 0 0 ${row.paddingLeft}px;background:${LIST_BOX_SELECTED};color:#fff;` +
+      `box-sizing:border-box;margin:0;border:0;padding:0 0 0 ${row.paddingLeft}px;background:${SELECTION_BLUE};color:#fff;` +
       `font:${row.font};line-height:${box.height}px;white-space:pre;overflow:hidden;text-align:left;letter-spacing:normal`,
   );
   option.textContent = row.label;
@@ -1767,7 +1767,7 @@ function drawSelectPopup(root: HTMLElement, view: PopupView): void {
         ? "rgb(128 128 128)"
         : "#000";
     const background = item.highlighted
-      ? POPUP_HIGHLIGHT
+      ? SELECTION_BLUE
       : item.selected
         ? "rgb(0 0 0 / 8%)"
         : "transparent";

@@ -20,6 +20,7 @@ import { emulateAnimationFrames } from "./animation-frames";
 import { PageCapture } from "./capture/page-capture";
 import { interceptLinks } from "./links";
 import { HOST_MESSAGE_EVENT, PAGE_MESSAGE_EVENT } from "./page";
+import type { FrameWindow } from "../types";
 
 export const HOST_ORIGIN_ATTRIBUTE = "data-host-origin";
 
@@ -68,8 +69,8 @@ export class PanelAgent {
     this.#parent = parent;
     this.#hostOrigin = hostOrigin;
     // Before the page's scripts, like the capture's focus and pointer capture.
-    emulateAnimationFrames(window as Window & typeof globalThis);
-    this.#stopLinks = interceptLinks(window as Window & typeof globalThis, (url) =>
+    emulateAnimationFrames(window as FrameWindow);
+    this.#stopLinks = interceptLinks(window as FrameWindow, (url) =>
       this.#post({ type: "open", url }),
     );
     this.#capture = new PageCapture(window.document, {
@@ -100,8 +101,7 @@ export class PanelAgent {
   }
 
   readonly #onWindowMessage = (event: MessageEvent) => {
-    if (event.source === null || event.source !== this.#parent || event.origin !== this.#hostOrigin)
-      return;
+    if (event.source !== this.#parent || event.origin !== this.#hostOrigin) return;
     const connect = parseConnect(event.data);
     const port = event.ports[0];
     if (!connect || !port) return;

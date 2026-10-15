@@ -521,7 +521,8 @@ export class HtmlPanel
    * contenteditable element in it has focus. For an on-screen keyboard (VR).
    */
   get isTyping(): boolean {
-    return this.editing && this.typing;
+    // Set only while editing (see setEditing).
+    return this.typing;
   }
 
   private updateCaret(caret: Caret | null): void {
@@ -789,10 +790,7 @@ export class HtmlPanel
     this.pressing = false;
     if (!this.editing) return;
     this.keyboard.release(this);
-    this.editing = false;
-    this.typing = false;
-    this.updateCaret(null);
-    this.send({ type: "blur" });
+    this.blurFromHost();
   }
 
   dispose(): void {

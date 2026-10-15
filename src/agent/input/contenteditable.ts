@@ -14,7 +14,7 @@
 // Cmd (macOS) to line and document boundaries, the macOS Emacs keys, Shift to
 // extend; and the formatting shortcuts browsers have in contenteditable.
 
-import type { KeyInput } from "./editing";
+import { lineModifier, primaryModifier, wordModifier, type KeyInput } from "./editing";
 
 export type ContentAction =
   /** Move or extend the selection, as Selection.modify() does. */
@@ -54,9 +54,9 @@ export function contentAction(
 ): ContentAction | null {
   const { key, shiftKey, ctrlKey, altKey, metaKey } = input;
   const alter = shiftKey ? "extend" : "move";
-  const primary = apple ? metaKey && !ctrlKey : ctrlKey && !metaKey;
-  const word = apple ? altKey && !metaKey && !ctrlKey : ctrlKey && !altKey && !metaKey;
-  const lineKey = apple && metaKey && !altKey && !ctrlKey;
+  const primary = primaryModifier(input, apple);
+  const word = wordModifier(input, apple);
+  const lineKey = lineModifier(input, apple);
   const modify = (direction: "backward" | "forward", granularity: Granularity): ContentAction => ({
     type: "modify",
     alter,

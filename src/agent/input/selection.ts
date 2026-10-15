@@ -43,7 +43,7 @@ export function editingHostOf(node: Node | null): HTMLElement | null {
  * Whether text in `element` can be selected: not where user-select is none
  * (unless it is editable, which is always selectable).
  */
-export function isSelectable(element: Element): boolean {
+function isSelectable(element: Element): boolean {
   const window = windowOf(element);
   for (let node: Element | null = element; node; node = node.parentElement) {
     if (node instanceof window.HTMLElement && node.isContentEditable) return true;

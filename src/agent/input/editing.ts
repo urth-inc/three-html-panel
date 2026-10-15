@@ -123,11 +123,16 @@ export function lineEnd(value: string, index: number): number {
   return next === -1 ? value.length : next;
 }
 
-const WORD_MODIFIER = (input: KeyInput, apple: boolean) =>
+/** The shortcut key (Cmd+A, Ctrl+C): Cmd on Apple platforms, Ctrl elsewhere, without the other. */
+export const primaryModifier = (input: KeyInput, apple: boolean) =>
+  apple ? input.metaKey && !input.ctrlKey : input.ctrlKey && !input.metaKey;
+/** The key that moves or deletes by word: Option on Apple platforms, Ctrl elsewhere, alone. */
+export const wordModifier = (input: KeyInput, apple: boolean) =>
   apple
     ? input.altKey && !input.metaKey && !input.ctrlKey
     : input.ctrlKey && !input.altKey && !input.metaKey;
-const LINE_MODIFIER = (input: KeyInput, apple: boolean) =>
+/** The key that moves or deletes to the line's end: Cmd alone, on Apple platforms only. */
+export const lineModifier = (input: KeyInput, apple: boolean) =>
   apple && input.metaKey && !input.altKey && !input.ctrlKey;
 
 /** What a key does in a text field, or null if it does nothing there. */
@@ -189,8 +194,8 @@ export function editAction(
     }
   }
 
-  const word = WORD_MODIFIER(input, apple);
-  const toLine = LINE_MODIFIER(input, apple);
+  const word = wordModifier(input, apple);
+  const toLine = lineModifier(input, apple);
   const toDocument =
     (!apple && input.ctrlKey && !input.altKey && !input.metaKey) || (apple && input.metaKey);
 
@@ -232,8 +237,7 @@ export function editAction(
   }
 
   // Select all, undo and redo: with Cmd on macOS, Ctrl elsewhere.
-  const command =
-    (apple ? input.metaKey && !input.ctrlKey : input.ctrlKey && !input.metaKey) && !input.altKey;
+  const command = primaryModifier(input, apple) && !input.altKey;
   if (!command) return null;
   switch (input.key.toLowerCase()) {
     case "a":

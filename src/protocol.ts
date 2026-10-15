@@ -53,12 +53,15 @@ function parseBox(value: unknown): Box | null {
   };
 }
 
-/** `value` if it is an absolute http(s) URL, else null: no javascript:, data: or the like. */
+/** The protocols of the links a page may hand the host to open: no javascript:, data: or the like. */
+export const OPENABLE_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
+
+/** `value` if it is an absolute URL of an OPENABLE_PROTOCOLS protocol, else null. */
 export function parseOpenableUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > MAX_URL_LENGTH) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+    return OPENABLE_PROTOCOLS.has(url.protocol) ? url.href : null;
   } catch {
     return null;
   }

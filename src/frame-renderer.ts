@@ -7,14 +7,13 @@ import { CanvasTexture, LinearFilter, LinearMipmapLinearFilter, SRGBColorSpace }
 import type { Frame } from "./types";
 
 export interface FrameRendererOptions {
-  /** The page size in CSS pixels. Frames of any other size are dropped. */
+  /** The page size in CSS pixels (frames of any other size never reach it: see parsePageMessage). */
   width: number;
   height: number;
   /** Canvas pixels per CSS pixel. */
   pixelRatio: number;
   /** Painted under the page, for pages that do not paint their own background. */
   background: string;
-  onDraw?: () => void;
 }
 
 /** The longest canvas side; some mobile GPUs cannot hold larger textures. */
@@ -149,12 +148,10 @@ export class FrameRenderer {
   }
 
   /**
-   * Queues a frame. Frames of the wrong size (taken while the iframe was being
-   * resized) are dropped. While a frame is being decoded, only the newest of
-   * the frames that arrive is kept, and while paused.
+   * Queues a frame. While a frame is being decoded, only the newest of the
+   * frames that arrive is kept, and while paused.
    */
   submit(frame: Frame): void {
-    if (frame.width !== this.options.width || frame.height !== this.options.height) return;
     this.pending = frame;
     if (!this.drawing && !this.paused) void this.drain();
   }
@@ -268,7 +265,6 @@ export class FrameRenderer {
         if (source !== image) (source as ImageBitmap).close();
         this.texture.needsUpdate = true;
         this.drawn = frame;
-        this.options.onDraw?.();
       } catch {
         // A frame that does not decode is skipped; the next one may.
       }

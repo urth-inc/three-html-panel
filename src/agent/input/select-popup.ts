@@ -9,6 +9,7 @@
 
 import type { Box, FrameWindow } from "../../types";
 import { announceChange, nextMatch, stepOption } from "./list-box";
+import { contains } from "./scrollbars";
 import { fontOf, textWidth } from "./selection";
 
 /** Items shown at once; more scroll. */
@@ -109,8 +110,7 @@ export class SelectPopup {
   }
 
   contains(x: number, y: number): boolean {
-    const { left, top, width, height } = this.box;
-    return x >= left && x < left + width && y >= top && y < top + height;
+    return contains(this.box, x, y);
   }
 
   /** The item at a point, or null outside the list. */

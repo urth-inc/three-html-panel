@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { FrameWindow } from "../types";
 import { emulateAnimationFrames } from "./animation-frames";
 
-type View = Window & typeof globalThis;
-
-let view: View;
+let view: FrameWindow;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
@@ -11,7 +10,7 @@ beforeEach(() => {
   view = {
     setTimeout: globalThis.setTimeout,
     performance: globalThis.performance,
-  } as unknown as View;
+  } as unknown as FrameWindow;
   emulateAnimationFrames(view, 50);
 });
 
