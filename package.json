@@ -50,7 +50,6 @@
   },
   "scripts": {
     "dev": "vp dev",
-    "dev:all": "pnpm --parallel -r --include-workspace-root dev",
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
@@ -58,7 +57,6 @@
     "e2e": "playwright test",
     "pack:lib": "vp pack",
     "prepublishOnly": "vp check && vp test run && vp pack",
-    "dev:sites": "pnpm --parallel --filter \"./examples/sites/*\" dev",
     "build:sites": "pnpm --filter \"./examples/sites/*\" build",
     "build:deploy": "vp build --mode deploy && pnpm --filter \"./examples/sites/*\" run build --mode deploy",
     "typecheck:sites": "pnpm --filter \"./examples/sites/*\" --if-present typecheck",

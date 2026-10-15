@@ -10,12 +10,8 @@
 // its own), as any site would: a change to the library shows in the sites
 // once it is published and their dependency raised.
 
-import { resolve } from "node:path";
-import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
-import { originVariable, originsFor, staticHeaders } from "../../vite.panels.config.ts";
-
-/** The repository's root, where the library's source is. */
-const ROOT = resolve(import.meta.dirname, "../..");
+import { defineConfig, type PluginOption, type UserConfig } from "vite";
+import { originsFor, staticHeaders } from "../../vite.panels.config.ts";
 
 /** Each site's port in development; `vp preview` uses this minus 1000 (as the scene: 5173 and 4173). */
 export const SITE_PORTS = {
@@ -32,23 +28,6 @@ export const SITE_NAMES = Object.keys(SITE_PORTS) as SiteName[];
 /** The variable that sets where a site is deployed, e.g. VITE_SITE_HN_READER_ORIGIN. */
 export const siteOriginVariable = (name: SiteName) =>
   `VITE_SITE_${name.toUpperCase().replace(/-/g, "_")}_ORIGIN`;
-
-/**
- * Where each site is served, for the scene to show it: its variable (from the
- * environment or an untracked .env file, see .env.example), or its own port on
- * localhost (`vp dev`, or `vp preview` in production mode).
- */
-export function siteOrigins(mode: string): Record<SiteName, string> {
-  const env = loadEnv(mode, ROOT, "VITE_SITE_");
-  const preview = mode === "production";
-  return Object.fromEntries(
-    SITE_NAMES.map((name) => [
-      name,
-      originVariable(env, mode, siteOriginVariable(name)) ||
-        `http://localhost:${SITE_PORTS[name] - (preview ? 1000 : 0)}`,
-    ]),
-  ) as Record<SiteName, string>;
-}
 
 export interface SiteOptions {
   name: SiteName;
