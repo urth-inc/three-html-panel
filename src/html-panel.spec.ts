@@ -11,7 +11,14 @@ import {
 } from "three";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { parseCssColor } from "./css-color";
-import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio } from "./html-panel";
+import type { FrameRenderer } from "./frame-renderer";
+import {
+  FAR_PACE_MS,
+  HtmlPanel,
+  PANEL_SANDBOX,
+  REST_AFTER_MS,
+  defaultPixelRatio,
+} from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
 
 // To count how often the panel reads its caret's color.
@@ -694,6 +701,28 @@ describe("the panel's iframe", () => {
       panel.onBeforeRender(renderer, new Scene(), front);
       await delivered();
       expect(visibility).toEqual([false, true]);
+      port.close();
+    });
+
+    it("rests after REST_AFTER_MS hidden: its iframe is not painted and its canvas let go of, until it is drawn again", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+      const panel = open();
+      panel.updateMatrixWorld();
+      const { port } = connect(panel);
+      const release = vi.spyOn(
+        (panel as unknown as { renderer: FrameRenderer }).renderer,
+        "release",
+      );
+      vi.advanceTimersByTime(REST_AFTER_MS - 500);
+      expect(panel.iframe.style.visibility).toBe("");
+      vi.advanceTimersByTime(1000);
+      // Off screen and invisible, still laid out at its size (a page loaded meanwhile is not 0x0).
+      expect(panel.iframe.style.visibility).toBe("hidden");
+      expect(parseFloat(panel.iframe.style.left)).toBeLessThan(-1000);
+      expect(panel.iframe.style.display).toBe("");
+      expect(release).toHaveBeenCalledTimes(1);
+      panel.onBeforeRender(renderer, new Scene(), front);
+      expect([panel.iframe.style.left, panel.iframe.style.visibility]).toEqual(["0px", ""]);
       port.close();
     });
 

@@ -128,6 +128,8 @@ export class FrameRenderer {
   private drawing = false;
   private disposed = false;
   private paused = false;
+  /** While let go of (see release): the canvas's size to come back to. */
+  private released: { width: number; height: number } | null = null;
   /** The most canvas pixels per CSS pixel: the pixelRatio asked for, within MAX_CANVAS_LENGTH. */
   private readonly maxRatio: number;
 
@@ -163,7 +165,30 @@ export class FrameRenderer {
    */
   setPaused(paused: boolean): void {
     this.paused = paused;
+    if (!paused && this.released) {
+      // Back from release: the canvas at its size again, and the last frame drawn on it.
+      this.canvas.width = this.released.width;
+      this.canvas.height = this.released.height;
+      this.released = null;
+      this.context.fillStyle = this.options.background;
+      this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      this.texture.needsUpdate = true;
+      this.pending ??= this.drawn;
+    }
     if (!paused && (this.pending || this.redraw) && !this.drawing) void this.drain();
+  }
+
+  /**
+   * While paused, lets go of the canvas's pixels and the texture's (the GPU's
+   * copy): a panel not seen for a while needs neither. Resumed, the last
+   * frame is drawn again (its SVG is kept), the background meanwhile.
+   */
+  release(): void {
+    if (!this.paused || this.released || this.disposed) return;
+    this.released = { width: this.canvas.width, height: this.canvas.height };
+    this.texture.dispose();
+    this.canvas.width = 0;
+    this.canvas.height = 0;
   }
 
   /**
@@ -176,6 +201,11 @@ export class FrameRenderer {
     const scale = Math.min(ratio, this.maxRatio);
     const width = Math.max(1, Math.round(this.options.width * scale));
     const height = Math.max(1, Math.round(this.options.height * scale));
+    // Let go of: it comes back at this size.
+    if (this.released) {
+      this.released = { width, height };
+      return;
+    }
     if (this.disposed || (width === this.canvas.width && height === this.canvas.height)) return;
     // Resizing clears the canvas: keep the picture meanwhile, scaled.
     const picture = document.createElement("canvas");
@@ -220,6 +250,11 @@ export class FrameRenderer {
       this.pending = null;
       try {
         const image = await loadSvg(frame.svg);
+        // Let go of meanwhile: drawn once resumed.
+        if (this.released) {
+          this.pending ??= frame;
+          continue;
+        }
         const { width, height } = this.canvas;
         const source = await sharedScaler.scale(image, width, height);
         if (this.disposed) {

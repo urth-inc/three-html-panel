@@ -72,8 +72,10 @@ export interface HtmlPanelOptions {
   /**
    * Stops the page's capture while the panel is not drawn facing the camera
    * (out of view, seen from behind, hidden, out of the scene) for a second, and
-   * captures it again the first time it is. Default true. Turn it off where the
-   * panel takes input without being rendered (no WebGL).
+   * captures it again the first time it is. Not drawn for REST_AFTER_MS, the
+   * panel also rests: the page is not painted, and the canvas and texture let
+   * go of their memory. Default true. Turn it off where the panel takes input
+   * without being rendered (no WebGL).
    */
   pauseWhenHidden?: boolean;
   /**
@@ -87,6 +89,16 @@ export interface HtmlPanelOptions {
 const CARET_BLINK_MS = 530;
 /** Not drawn facing the camera for this long, a panel counts as hidden. */
 export const HIDDEN_AFTER_MS = 1000;
+/**
+ * Hidden for this long, a panel rests: its page is not painted (the iframe is
+ * moved off screen and made invisible; the page runs on and keeps its state),
+ * and the canvas and the texture let go of their memory (see
+ * FrameRenderer.release). Not display: none, which takes the page's layout
+ * away: a page loaded meanwhile would start at 0x0, and boxes and scroll
+ * offsets would read 0. Longer than a glance away, so that turning back is
+ * not a redraw each time.
+ */
+export const REST_AFTER_MS = 10_000;
 /** How often whether a panel is hidden, or far, is decided. */
 const VIEW_CHECK_MS = HIDDEN_AFTER_MS / 4;
 /**
@@ -181,6 +193,8 @@ export class HtmlPanel
   private drawnAt = performance.now();
   /** Whether the page was told the panel is drawn (see pauseWhenHidden). */
   private shown = true;
+  /** Hidden for REST_AFTER_MS: its iframe is not painted, and its canvas let go of. */
+  private resting = false;
   /** Whether the page was told the panel is drawn small (see FAR_SCALE). */
   private far = false;
   /** The largest scale any view drew the panel at since the pace was last decided; -1: none drew it. */
@@ -291,8 +305,9 @@ export class HtmlPanel
 
     this.pauseWhenHidden = options.pauseWhenHidden ?? true;
     this.viewTimer = window.setInterval(() => {
-      if (this.pauseWhenHidden && this.shown && performance.now() - this.drawnAt > HIDDEN_AFTER_MS)
-        this.setShown(false);
+      const hiddenFor = performance.now() - this.drawnAt;
+      if (this.pauseWhenHidden && this.shown && hiddenFor > HIDDEN_AFTER_MS) this.setShown(false);
+      if (!this.shown && !this.resting && hiddenFor > REST_AFTER_MS) this.setResting(true);
       this.decidePace();
     }, VIEW_CHECK_MS);
 
@@ -348,6 +363,7 @@ export class HtmlPanel
     // The iframe must stay inside the viewport: browsers throttle rendering and
     // timers of iframes that are off screen, which would freeze the panel. It is
     // transparent, ignores the pointer and sits behind everything instead.
+    // (Resting, it is off screen on purpose: see REST_AFTER_MS.)
     Object.assign(iframe.style, {
       position: "fixed",
       left: "0",
@@ -457,8 +473,18 @@ export class HtmlPanel
 
   private setShown(shown: boolean): void {
     this.shown = shown;
+    // Laid out again before the page is told it is seen (it captures then).
+    if (shown && this.resting) this.setResting(false);
     this.renderer.setPaused(!shown);
     this.send({ type: "visibility", visible: shown });
+  }
+
+  private setResting(resting: boolean): void {
+    this.resting = resting;
+    // Off screen, the browser also throttles its rendering and timers (see openFrame).
+    this.iframe.style.left = resting ? `${-2 * this.pageWidth}px` : "0";
+    this.iframe.style.visibility = resting ? "hidden" : "";
+    if (resting) this.renderer.release();
   }
 
   private setCursor(cursor: string): void {

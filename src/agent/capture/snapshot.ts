@@ -39,6 +39,10 @@ import {
   type LostDeclarations,
 } from "./css";
 
+/** A transparent 1x1 GIF: what an image far out of view is in the copy (see farFromView). */
+const TRANSPARENT_PIXEL =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
   "SCRIPT",
@@ -937,6 +941,16 @@ class Snapshotter {
     }
     if (!(element instanceof HTMLImageElement)) return;
     copy.removeAttribute("loading");
+    // Far out of view (scrolled away), it is not seen: not embedded, nor
+    // fetched. A transparent pixel at its size keeps the layout.
+    if (this.#farFromView(element) && copy instanceof HTMLElement) {
+      copy.setAttribute("src", TRANSPARENT_PIXEL);
+      for (const property of ["width", "height"]) {
+        const value = style.getPropertyValue(property);
+        if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
+      }
+      return;
+    }
     const picked =
       element.hasAttribute("srcset") || element.parentElement instanceof HTMLPictureElement;
     // The candidate the browser picked. A lazy image below the host's viewport
@@ -960,6 +974,18 @@ class Snapshotter {
       if (standIn && style.objectFit === "fill")
         copy.style.setProperty("object-fit", "contain", "important");
     }
+  }
+
+  /**
+   * Whether an element is more than a viewport away from the viewport, in any
+   * direction. Images that near are embedded: scrolled in, they show at once.
+   */
+  #farFromView(element: Element): boolean {
+    const { innerWidth: width, innerHeight: height } = this.#window;
+    const box = element.getBoundingClientRect();
+    return (
+      box.bottom < -height || box.top > 2 * height || box.right < -width || box.left > 2 * width
+    );
   }
 
   #copyCanvas(canvas: HTMLCanvasElement): Node | null {
