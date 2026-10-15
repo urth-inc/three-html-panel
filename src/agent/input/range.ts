@@ -48,10 +48,14 @@ export function boundsOf(slider: HTMLInputElement): Bounds {
   return { min, max, step: parsed > 0 ? parsed : 1 };
 }
 
-/** Decimal places of a number as written, to round sums of steps (0.1 + 0.2) back to them. */
+/**
+ * Decimal places of a number, to round sums of steps (0.1 + 0.2) back to them.
+ * Small numbers are written with an exponent: 1.5e-7 has 8.
+ */
 const decimals = (value: number) => {
-  const [, fraction = ""] = String(value).split(".");
-  return fraction.replace(/e.*$/, "").length;
+  const [mantissa = "", exponent = "0"] = String(value).toLowerCase().split("e");
+  const fraction = mantissa.split(".")[1] ?? "";
+  return Math.min(100, Math.max(0, fraction.length - Number(exponent)));
 };
 
 /**

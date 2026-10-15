@@ -51,6 +51,9 @@ describe("helpers", () => {
     // Tenths stay tenths (0.1 * 3 is 0.30000000000000004).
     expect(snap(0.31, { min: 0, max: 1, step: 0.1 })).toBe(0.3);
     expect(snap(0.317, { min: 0, max: 1, step: 0 })).toBe(0.317);
+    // Small steps are written with an exponent (1e-7): still steps, not whole numbers.
+    expect(snap(0.00000034, { min: 0, max: 1, step: 1e-7 })).toBe(3e-7);
+    expect(snap(0.000000253, { min: 0, max: 1, step: 1.5e-8 })).toBe(2.55e-7);
   });
 
   it("finds the value at a point: the ends half a thumb in, right to left too", () => {
@@ -169,6 +172,19 @@ describe("moving a slider in the panel", () => {
     pointer("down", 208);
     pointer("up", 208);
     expect(events).toEqual(["input 25", "change 25"]);
+  });
+
+  it("lets go of a slider press that never got its release when the next press comes", () => {
+    pointer("down", 208);
+    // No release: the next press is on something else, and drags.
+    const other = document.createElement("p");
+    document.body.append(other);
+    document.elementFromPoint = () => other;
+    pointer("down", 108);
+    pointer("move", 300);
+    pointer("up", 300);
+    expect(slider.value).toBe("25");
+    expect(events).toEqual(["input 25"]);
   });
 
   it("steps with the keys once focused, each a committed change", () => {
