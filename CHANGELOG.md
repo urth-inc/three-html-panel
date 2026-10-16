@@ -6,6 +6,10 @@ Each version's section is also the release notes of its [GitHub Release](https:/
 
 ## Unreleased
 
+### Changed
+
+- A link to the panel's own origin opens in the panel by default, as following a link does in a browser (the page there loads the agent too, and the panel connects to it again), rather than in a new tab. Links to other origins still open in a new tab. `onLink` still decides when given.
+
 ### Added
 
 - Several host origins for one page: `data-host-origin` takes origins separated by white space, and `startAgent()`'s `hostOrigin` a list too. The agent takes `connect` from any of them, and posts `ready` to the parent's origin when the browser tells it (`location.ancestorOrigins`, in Chromium and WebKit), else to each (only the parent's own origin receives it). If one is not exactly an origin, the agent does not start, so a typo leaves none of them allowed. `readHostOrigins()` reads them from the agent's `<script>`.

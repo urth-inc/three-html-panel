@@ -8,7 +8,7 @@ import {
   type MeshBasicMaterial,
   type WebGLRenderer,
 } from "three";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { parseCssColor } from "./css-color";
 import type { FrameRenderer } from "./frame-renderer";
 import {
@@ -440,8 +440,9 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
-    it("opens links in a new tab, without a way back to the host, by default", async () => {
+    it("opens links to other origins in a new tab, without a way back to the host, by default", async () => {
       const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
       const panel = open(false);
       const port = connect(panel);
       panel.pointer("up", new Vector2(0.5, 0.5));
@@ -452,6 +453,26 @@ describe("the panel's iframe", () => {
         "_blank",
         "noopener,noreferrer",
       );
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
+      port.close();
+    });
+
+    it("opens links to the panel's own origin in the panel, by default", async () => {
+      const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
+      const panel = open(true);
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      port.postMessage({ type: "open", url: "https://panel.example/other/?q=1" });
+      await delivered();
+      expect(windowOpen).not.toHaveBeenCalled();
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/other/?q=1");
+      // The page it opens is loaded sandboxed too, as the first.
+      expect(sandboxAtSrc.at(-1)).toBe(PANEL_SANDBOX);
+      // Another port of the same host is another origin: a new tab.
+      port.postMessage({ type: "open", url: "https://panel.example:8443/" });
+      await delivered();
+      expect(windowOpen).toHaveBeenCalledTimes(1);
       port.close();
     });
 

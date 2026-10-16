@@ -58,20 +58,22 @@ renderer.setAnimationLoop(() => renderer.render(scene, camera));
 
 For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `PanelXRKeyboard`: there is no system keyboard in an immersive session. With a `WebGPURenderer`, VR on its WebGPU backend needs what three asks for there (a session with the `webgpu` feature); elsewhere, use its WebGL 2 backend (`forceWebGL: true`). VR with a `WebGPURenderer` has not been tried.
 
-| Option            | Default           | Meaning                                                       |
-| ----------------- | ----------------- | ------------------------------------------------------------- |
-| `url`             |                   | The page. It must load the agent                              |
-| `width`, `height` | 800, 600          | The page's size in CSS px                                     |
-| `size`            | 1                 | The panel's longer side in world units                        |
-| `sandbox`         | `false`           | Run the page sandboxed (see Security)                         |
-| `pixelRatio`      | 2 (1 on phones)   | Texture pixels per CSS pixel, at most                         |
-| `background`      | `#ffffff`         | Painted under transparent pages                               |
-| `pauseWhenHidden` | `true`            | Pause capturing, then rest, while not drawn (see Performance) |
-| `optimizeHover`   | `true`            | Skip captures for unchanged hover (see Performance)           |
-| `readyTimeout`    | 15000             | ms to wait for the agent before `onError`                     |
-| `onLink`          | open in a new tab | A link the user followed (http(s), right after acting on it)  |
-| `onMessage`       |                   | Data the page sent with `sendToHost()`                        |
-| `onError`         | `console.warn`    | The agent did not connect, or speaks another protocol         |
+| Option            | Default         | Meaning                                                       |
+| ----------------- | --------------- | ------------------------------------------------------------- |
+| `url`             |                 | The page. It must load the agent                              |
+| `width`, `height` | 800, 600        | The page's size in CSS px                                     |
+| `size`            | 1               | The panel's longer side in world units                        |
+| `sandbox`         | `false`         | Run the page sandboxed (see Security)                         |
+| `pixelRatio`      | 2 (1 on phones) | Texture pixels per CSS pixel, at most                         |
+| `background`      | `#ffffff`       | Painted under transparent pages                               |
+| `pauseWhenHidden` | `true`          | Pause capturing, then rest, while not drawn (see Performance) |
+| `optimizeHover`   | `true`          | Skip captures for unchanged hover (see Performance)           |
+| `readyTimeout`    | 15000           | ms to wait for the agent before `onError`                     |
+| `onLink`          | see below       | A link the user followed (http(s), right after acting on it)  |
+| `onMessage`       |                 | Data the page sent with `sendToHost()`                        |
+| `onError`         | `console.warn`  | The agent did not connect, or speaks another protocol         |
+
+By default, a link to the panel's own origin opens in the panel (the page there loads the agent too, and the panel connects to it again), and a link to any other origin in a new tab of the host's browser. A link to another port or subdomain is another origin.
 
 ### Adding the agent to a page
 
