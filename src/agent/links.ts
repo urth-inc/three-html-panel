@@ -4,8 +4,9 @@
 // link opens a popup, which the browser blocks: the click is synthetic, so there
 // is no user activation) or replace the panel with a page that has no agent,
 // leaving the panel blank. So link clicks that the page does not cancel, and the
-// page's window.open(), are handed to the host, which opens them (in a new tab,
-// by default). Links within the page (#fragment) are left alone.
+// page's window.open(), are handed to the host, which opens them (by default, a
+// page of the panel's own origin in the panel, any other in a new tab). Links
+// within the page (#fragment) are left alone.
 
 import { OPENABLE_PROTOCOLS } from "../protocol";
 import type { FrameWindow } from "../types";

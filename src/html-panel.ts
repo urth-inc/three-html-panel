@@ -63,7 +63,9 @@ export interface HtmlPanelOptions {
   /**
    * Opens a link the user followed in the page (or a URL the page passed to
    * window.open()): an http(s) URL, only right after the user pressed the
-   * panel or a key in it. By default, in a new tab of the host's browser.
+   * panel or a key in it. By default, a page of the panel's own origin opens
+   * in the panel (it loads the agent too, and connects again), and any other
+   * in a new tab of the host's browser.
    */
   onLink?: (url: URL, panel: HtmlPanel) => void;
   /** Data the page sent with `sendToHost()` (agent/page.ts). Check it before use. */
@@ -151,8 +153,15 @@ export function defaultPixelRatio(): number {
 }
 
 /** Opens a link in a new tab, without giving the new page a way back to the host. */
-function openInNewTab(url: URL): void {
-  window.open(url.href, "_blank", "noopener,noreferrer");
+/**
+ * Where a link goes by default: a page of the panel's own origin replaces the
+ * page in the panel, as following a link does in a browser (a page of that
+ * origin loads the agent too); any other opens in a new tab, with no way back
+ * to the host.
+ */
+function openLink(url: URL, panel: HtmlPanel): void {
+  if (url.origin === panel.origin) panel.iframe.src = url.href;
+  else window.open(url.href, "_blank", "noopener,noreferrer");
 }
 
 /** The caret's color before the page has sent one that can be read: the usual one, opaque black. */
@@ -341,7 +350,7 @@ export class HtmlPanel
       onOpen: (url) => {
         // Not on its own: a page cannot open tabs, sandboxed or not, unless the user just acted on it.
         if (performance.now() > this.userActionUntil) return;
-        (options.onLink ?? openInNewTab)(new URL(url), this);
+        (options.onLink ?? openLink)(new URL(url), this);
       },
       onMessage: (data) => options.onMessage?.(data),
       onError: (error) => {
