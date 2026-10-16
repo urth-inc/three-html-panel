@@ -4,6 +4,21 @@ Changes to the `@urth/three-html-panel` package. Changes to the demo and example
 
 Each version's section is also the release notes of its [GitHub Release](https://github.com/urth-inc/three-html-panel/releases), made when its tag is pushed.
 
+## Unreleased
+
+### Added
+
+- Several host origins for one page: `data-host-origin` takes origins separated by white space, and `startAgent()`'s `hostOrigin` a list too. The agent takes `connect` from any of them, and posts `ready` to the parent's origin when the browser tells it (`location.ancestorOrigins`, in Chromium and WebKit), else to each (only the parent's own origin receives it). If one is not exactly an origin, the agent does not start, so a typo leaves none of them allowed. `readHostOrigins()` reads them from the agent's `<script>`.
+
+### Changed
+
+- `startAgent()` warns, naming it, when the host origin it is given is not exactly an origin, rather than leave the panel blank without a word (the agent's `<script>` warned already).
+- A host origin whose host has characters no host name has (`"https://host.example,"`, which URLs take as a host) is not an origin: origins separated by commas or semicolons, by mistake, start nothing (and say so) rather than leave the agent waiting for a host that cannot exist.
+
+### Removed
+
+- `readHostOrigin()`, which read one host origin: use `readHostOrigins()`, which reads one or several.
+
 ## 0.2.6 - 2026-10-15
 
 ### Added

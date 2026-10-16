@@ -10,13 +10,21 @@ import {
   type Mock,
 } from "vite-plus/test";
 import { PROTOCOL_VERSION } from "../protocol";
-import { parseOrigin, readHostOrigin, startAgent, type PanelAgent } from "./agent";
+import {
+  parseOrigin,
+  parseOrigins,
+  readHostOrigins,
+  readyTargets,
+  startAgent,
+  type PanelAgent,
+} from "./agent";
 import { PageCapture } from "./capture/page-capture";
 import { RenderPacer } from "./capture/pacer";
 import { onHostMessage, sendToHost } from "./page";
 import { delivered, eventsWithoutView, stubContentEditable, stubRangeRects } from "../test-helpers";
 
 const HOST = "https://host.example";
+const STAGING = "https://staging.example";
 
 let parent: { postMessage: Mock };
 let agent: PanelAgent | null = null;
@@ -38,7 +46,7 @@ afterEach(() => {
   channel = null;
 });
 
-const start = (hostOrigin: string | null = HOST) =>
+const start = (hostOrigin: string | readonly string[] | null = HOST) =>
   (agent = startAgent({ hostOrigin, parent: parent as unknown as Window }));
 
 /** Delivers `connect` to the page's window, as if posted by `source` from `origin`. */
@@ -92,16 +100,88 @@ describe("starting", () => {
 
   it("reads the host origin from its script tag", () => {
     document.head.innerHTML = `<script type="module" data-host-origin="${HOST}"></script>`;
-    expect(readHostOrigin(document)).toBe(HOST);
+    expect(readHostOrigins(document)).toEqual([HOST]);
     document.head.innerHTML = `<script type="module" data-host-origin="*"></script>`;
-    expect(readHostOrigin(document)).toBeNull();
+    expect(readHostOrigins(document)).toBeNull();
     document.head.innerHTML = "";
-    expect(readHostOrigin(document)).toBeNull();
+    expect(readHostOrigins(document)).toBeNull();
     expect(parseOrigin("http://localhost:5173")).toBe("http://localhost:5173");
+  });
+
+  it("reads several host origins, separated by white space, or from a list", () => {
+    expect(parseOrigins(HOST)).toEqual([HOST]);
+    expect(parseOrigins(`  ${HOST}\n\t${STAGING}  `)).toEqual([HOST, STAGING]);
+    expect(parseOrigins([HOST, STAGING, HOST])).toEqual([HOST, STAGING]);
+    // One that is not exactly an origin (a typo) allows none: not the others quietly.
+    expect(parseOrigins(`${HOST} https://staging.example/`)).toBeNull();
+    expect(parseOrigins([HOST, "*"])).toBeNull();
+    for (const none of [null, "", "   ", []]) expect(parseOrigins(none)).toBeNull();
+    // A comma or semicolon between origins: URLs take "host.example," as a host, but no host is on it.
+    expect(parseOrigins(`${HOST}, ${STAGING}`)).toBeNull();
+    expect(parseOrigin(`${HOST};`)).toBeNull();
+    for (const origin of [
+      "http://localhost:5173",
+      "http://127.0.0.1:8080",
+      "http://[::1]:5173",
+      "https://xn--r8jz45g.example",
+      "http://dev_box.local:8080",
+    ])
+      expect(parseOrigin(origin)).toBe(origin);
+
+    document.head.innerHTML = `<script type="module" data-host-origin="${HOST} ${STAGING}"></script>`;
+    expect(readHostOrigins(document)).toEqual([HOST, STAGING]);
+    document.head.innerHTML = "";
+  });
+
+  it("posts ready only to the parent's origin when the browser tells it, else to each host origin", () => {
+    const frame = (ancestorOrigins?: string[]) => {
+      const parent = {} as Window;
+      return { parent, window: { parent, location: { ancestorOrigins } } as unknown as Window };
+    };
+    const known = frame([STAGING, "https://top.example"]);
+    expect(readyTargets(known.window, known.parent, [HOST, STAGING])).toEqual([STAGING]);
+    // Not a host origin ("null" under a no-referrer policy, say), not told (Firefox), or another parent: each.
+    for (const ancestors of [["null"], ["https://evil.example"], [], undefined]) {
+      const { window, parent } = frame(ancestors);
+      expect(readyTargets(window, parent, [HOST, STAGING])).toEqual([HOST, STAGING]);
+    }
+    expect(readyTargets(known.window, {} as Window, [HOST, STAGING])).toEqual([HOST, STAGING]);
+  });
+
+  it("warns, naming what is wrong, when the host origin it was given is not one", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+    expect(start(`${HOST}, ${STAGING}`)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain(`"${HOST},"`);
+    expect(warn.mock.calls[0]![0]).not.toContain(`"${STAGING}"`);
+    // None given (a page opened on its own, an unset variable): nothing to say.
+    for (const none of [null, "", "  "]) start(none);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts ready to each host origin it may be on, and to none if one is not an origin", () => {
+    start([HOST, STAGING]);
+    expect(parent.postMessage.mock.calls).toEqual([
+      [{ type: "ready", version: PROTOCOL_VERSION }, HOST],
+      [{ type: "ready", version: PROTOCOL_VERSION }, STAGING],
+    ]);
+    agent?.dispose();
+    parent.postMessage.mockClear();
+    expect(start(`${HOST} *`)).toBeNull();
+    expect(parent.postMessage).not.toHaveBeenCalled();
   });
 });
 
 describe("connecting", () => {
+  it("takes connect from any of its host origins, and from no other", () => {
+    start(`${HOST} ${STAGING}`);
+    connect("https://evil.example");
+    expect(agent!.connected).toBe(false);
+    connect(STAGING);
+    expect(agent!.connected).toBe(true);
+  });
+
   it("ignores connect from another origin or window", () => {
     start();
     connect("https://evil.example");
