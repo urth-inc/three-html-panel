@@ -5,10 +5,11 @@
 // document, so the page can be on any origin, as long as it loads the agent.
 //
 // The agent talks only to the host origins it was given, and only after the
-// host answered: `ready` goes to the parent window addressed to each of them
-// (never "*", which would show the page to whatever embeds it; postMessage
-// drops the copies addressed to an origin the parent is not on), and the rest
-// goes through the MessagePort the host hands over.
+// host answered: `ready` goes to the parent window addressed to the parent's
+// origin when the browser tells it (location.ancestorOrigins) and it is one of
+// them, else to each of them (never "*", which would show the page to whatever
+// embeds it; postMessage drops the copies addressed to an origin the parent is
+// not on), and the rest goes through the MessagePort the host hands over.
 
 import {
   PROTOCOL_VERSION,
@@ -25,12 +26,21 @@ import type { FrameWindow } from "../types";
 
 export const HOST_ORIGIN_ATTRIBUTE = "data-host-origin";
 
+/**
+ * A host name as DNS has them (letters, digits, hyphens and dots, and the
+ * underscores some internal hosts have; an internationalized one is in
+ * punycode in an origin), or an IPv6 address. URLs also take others
+ * ("host.example," is a host), which no host is on: there, a typo.
+ */
+const HOST_NAME = /^([a-z0-9_-]+\.)*[a-z0-9_-]+\.?$|^\[[0-9a-f:.]+\]$/i;
+
 /** Returns `value` if it is exactly an origin ("https://example.com"), or null. */
 export function parseOrigin(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
-    const origin = new URL(value).origin;
-    return origin !== "null" && origin === value ? origin : null;
+    const url = new URL(value);
+    const origin = url.origin;
+    return origin !== "null" && origin === value && HOST_NAME.test(url.hostname) ? origin : null;
   } catch {
     return null;
   }
@@ -45,13 +55,16 @@ export function parseOrigins(
   value: string | readonly string[] | null | undefined,
 ): string[] | null {
   if (!value) return null;
-  const names = typeof value === "string" ? value.trim().split(/\s+/) : value;
-  const origins = names.map(parseOrigin);
+  const origins = namesOf(value).map(parseOrigin);
   if (origins.length === 0 || origins.some((origin) => origin === null)) return null;
   return [...new Set(origins as string[])];
 }
 
-const hostOriginAttribute = (document: Document) =>
+const namesOf = (value: string | readonly string[]) =>
+  typeof value === "string" ? value.trim().split(/\s+/) : value;
+
+/** The value of the agent's `<script data-host-origin="...">`, as written. */
+export const hostOriginAttribute = (document: Document) =>
   document.querySelector(`script[${HOST_ORIGIN_ATTRIBUTE}]`)?.getAttribute(HOST_ORIGIN_ATTRIBUTE);
 
 /**
@@ -61,15 +74,6 @@ const hostOriginAttribute = (document: Document) =>
  */
 export function readHostOrigins(document: Document): string[] | null {
   return parseOrigins(hostOriginAttribute(document));
-}
-
-/**
- * The host origin from the agent's `<script data-host-origin="...">`, when it
- * names one.
- * @deprecated Use readHostOrigins(), which also reads several.
- */
-export function readHostOrigin(document: Document): string | null {
-  return parseOrigin(hostOriginAttribute(document));
 }
 
 export interface AgentOptions {
@@ -114,8 +118,8 @@ export class PanelAgent {
     window.addEventListener("message", this.#onWindowMessage);
     window.addEventListener(PAGE_MESSAGE_EVENT, this.#onPageMessage);
     const ready: ReadyMessage = { type: "ready", version: PROTOCOL_VERSION };
-    // To each origin the host may be on: only the one the parent is on receives it.
-    for (const origin of hostOrigins) parent.postMessage(ready, origin);
+    for (const origin of readyTargets(window, parent, hostOrigins))
+      parent.postMessage(ready, origin);
   }
 
   get connected(): boolean {
@@ -188,13 +192,43 @@ export class PanelAgent {
 }
 
 /**
- * Starts the agent, unless there is nothing to talk to: no valid host origin,
- * or the page is not in a frame.
+ * Where `ready` goes: the parent's origin, when the browser tells it
+ * (location.ancestorOrigins, in Chromium and WebKit) and it is a host origin.
+ * Else each host origin: postMessage drops those the parent is not on, though
+ * Chromium logs an error for each, which knowing the parent's origin avoids.
+ */
+export function readyTargets(
+  window: Window,
+  parent: Window,
+  hostOrigins: readonly string[],
+): readonly string[] {
+  const parentOrigin = parent === window.parent ? window.location.ancestorOrigins?.[0] : undefined;
+  return parentOrigin && hostOrigins.includes(parentOrigin) ? [parentOrigin] : hostOrigins;
+}
+
+/**
+ * Starts the agent, unless there is nothing to talk to: no host origin, a host
+ * origin that is not exactly an origin (it warns, naming it), or the page is
+ * not in a frame.
  */
 export function startAgent(options: AgentOptions): PanelAgent | null {
   const window = options.window ?? globalThis.window;
   const parent = options.parent === undefined ? window.parent : options.parent;
   const hostOrigins = parseOrigins(options.hostOrigin);
-  if (!hostOrigins || !parent || parent === window) return null;
+  if (!hostOrigins) {
+    // Given, but wrong: say what, rather than leave the panel blank without a word.
+    if (options.hostOrigin && namesOf(options.hostOrigin).some((name) => name !== "")) {
+      const wrong = namesOf(options.hostOrigin).filter((name) => !parseOrigin(name));
+      console.warn(
+        `[three-html-panel] the agent is not started: the host origin has ${wrong
+          .map((name) => JSON.stringify(name))
+          .join(
+            ", ",
+          )}, which is not exactly an origin ("https://host.example", several separated by spaces)`,
+      );
+    }
+    return null;
+  }
+  if (!parent || parent === window) return null;
   return new PanelAgent(window, parent, hostOrigins);
 }
