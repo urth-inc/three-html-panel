@@ -7,6 +7,8 @@
 
 Show existing web pages — scripts included, from any origin — as interactive panels in a three.js scene.
 
+[![Real sites (React, Vue, Svelte and plain HTML, each on its own origin) used as panels in a three.js scene: typing, filtering and scrolling](https://raw.githubusercontent.com/urth-inc/three-html-panel/main/docs/demo.webp)](https://three-html-panel-demo.pages.dev/)
+
 **[Live demo](https://three-html-panel-demo.pages.dev/)**: real sites, each on its own origin, as panels you can use in 3D.
 
 - Mouse, touch and VR controllers: hover, click, drag, wheel and touch scrolling
