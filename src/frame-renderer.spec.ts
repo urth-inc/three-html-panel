@@ -203,13 +203,15 @@ describe("FrameRenderer", () => {
     expect(renderer.canvas.width).toBe(1600);
     renderer.setPaused(true);
     renderer.release();
-    expect([renderer.canvas.width, renderer.canvas.height]).toEqual([0, 0]);
+    expect([renderer.canvas.width, renderer.canvas.height]).toEqual([1, 1]);
     expect(dispose).toHaveBeenCalledTimes(1);
     // A resolution asked for meanwhile is the one it comes back at.
     renderer.setResolution(1);
-    expect(renderer.canvas.width).toBe(0);
+    expect(renderer.canvas.width).toBe(1);
     renderer.setPaused(false);
     expect([renderer.canvas.width, renderer.canvas.height]).toEqual([800, 600]);
+    // Made again at that size: three.js may have made it from the 1x1 canvas meanwhile.
+    expect(dispose).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(decoded).toEqual(["<svg>page</svg>", "<svg>page</svg>"]));
     renderer.dispose();
   });
