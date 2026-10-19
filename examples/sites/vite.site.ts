@@ -19,6 +19,8 @@ export const SITE_PORTS = {
   "hn-reader": 5176,
   chat: 5177,
   gallery: 5178,
+  // 5179 is the live demo's.
+  timetable: 5180,
 } as const;
 
 export type SiteName = keyof typeof SITE_PORTS;

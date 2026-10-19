@@ -31,6 +31,11 @@ const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
     stack: "Svelte",
     description: "A photo gallery and editor: filters, sliders, drag and drop.",
   },
+  timetable: {
+    title: "Timetable",
+    stack: "HTML · CSS · TS",
+    description: "An event timetable that follows the clock, from a JSON file.",
+  },
 };
 
 export const SITES: readonly Site[] = Object.entries(import.meta.env.VITE_SITES).flatMap(
