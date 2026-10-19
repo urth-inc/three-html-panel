@@ -1,7 +1,7 @@
 {
   "name": "@urth/three-html-panel",
-  "version": "0.2.6",
-  "description": "Show existing web pages, scripts included and from any origin, as interactive panels in a three.js scene",
+  "version": "0.3.0",
+  "description": "Show web pages you control, scripts included and on any origin, as interactive panels in a three.js scene",
   "keywords": [
     "html",
     "iframe",
