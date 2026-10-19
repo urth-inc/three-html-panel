@@ -476,6 +476,21 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
+    it("opens links to the host's own origin in a new tab, even from a panel on that origin", async () => {
+      const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
+      const page = new URL("/panel/", location.href).href;
+      const panel = open(true, undefined, { url: page });
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      const home = new URL("/", location.href).href;
+      port.postMessage({ type: "open", url: home });
+      await delivered();
+      expect(windowOpen).toHaveBeenCalledWith(home, "_blank", "noopener,noreferrer");
+      expect(panel.iframe.getAttribute("data-src")).toBe(page);
+      port.close();
+    });
+
     it("goes back to the page it left when the page a link opened in the panel does not connect", async () => {
       const onError = vi.fn();
       const panel = open(true, undefined, { readyTimeout: 50, onError });

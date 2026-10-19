@@ -401,10 +401,11 @@ export class HtmlPanel
    * page in the panel, as following a link does in a browser (a page of that
    * origin loads the agent too); any other opens in a new tab, with no way back
    * to the host. If the page in the panel does not connect, the panel goes back
-   * (see onError).
+   * (see onError). The host's own origin always opens in a new tab: in the
+   * panel, the host's own pages (its scene) would run again inside it.
    */
   private openLink(url: URL): void {
-    if (url.origin !== this.origin) {
+    if (url.origin !== this.origin || url.origin === location.origin) {
       window.open(url.href, "_blank", "noopener,noreferrer");
       return;
     }

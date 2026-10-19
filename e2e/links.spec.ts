@@ -13,6 +13,7 @@ test.beforeEach(async ({ page }) => {
 
 /** Puts a link at the top left of the page, over the rest, and returns where to press it. */
 async function addLink(href: string) {
+  const framesBefore = await panel.page.evaluate(() => window.harness.frames);
   await panel.frame.evaluate((href) => {
     const link = document.createElement("a");
     link.id = "test-link";
@@ -22,8 +23,10 @@ async function addLink(href: string) {
       "position:fixed;left:0;top:0;width:120px;height:60px;z-index:9;background:#fff;display:block";
     document.body.append(link);
   }, href);
-  // Drawn, so that a press lands on it.
-  await panel.page.waitForTimeout(300);
+  // Drawn (the page sends a frame with it), so that a press lands on it.
+  await expect
+    .poll(() => panel.page.evaluate(() => window.harness.frames))
+    .toBeGreaterThan(framesBefore);
   return panel.at("#test-link");
 }
 

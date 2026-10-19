@@ -8,7 +8,7 @@ Each version's section is also the release notes of its [GitHub Release](https:/
 
 ### Changed
 
-- A link to the panel's own origin opens in the panel by default, as following a link does in a browser (the page there loads the agent too, and the panel connects to it again), rather than in a new tab. Links to other origins still open in a new tab. If the page opened in the panel does not connect within `readyTimeout` (a PDF, or a page without the agent), the panel goes back to the page it left and reports it to `onError`. `onLink` still decides when given.
+- A link to the panel's own origin opens in the panel by default, as following a link does in a browser (the page there loads the agent too, and the panel connects to it again), rather than in a new tab. Links to other origins still open in a new tab. So do links to the host's own origin, even from a panel on it (the host's scene would run again inside the panel). If the page opened in the panel does not connect within `readyTimeout` (a PDF, or a page without the agent), the panel goes back to the page it left and reports it to `onError`. `onLink` still decides when given.
 
 ### Added
 
