@@ -10,7 +10,7 @@
     "typecheck": "svelte-check"
   },
   "dependencies": {
-    "@urth/three-html-panel": "0.2.6"
+    "@urth/three-html-panel": "0.3.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

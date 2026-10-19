@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@urth/three-html-panel": "0.2.6",
+    "@urth/three-html-panel": "0.3.0",
     "three": "0.186.1"
   },
   "devDependencies": {

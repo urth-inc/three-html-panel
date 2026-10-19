@@ -42,18 +42,9 @@ camera.position.set(0, EYE_HEIGHT, 0.4);
 const SITE_SIZE = 2.3;
 const SITE_DISTANCE = 2.4;
 
-/**
- * A link the user follows in a panel: to another page of the same site, it
- * opens in the panel (the page loads the agent too, and connects again);
- * elsewhere, in a new tab.
- */
-function openLink(url: URL, panel: HtmlPanel): void {
-  if (url.origin === panel.origin) panel.iframe.src = url.href;
-  else window.open(url.href, "_blank", "noopener,noreferrer");
-}
-
 // Every page runs sandboxed: none can reach the scene's cookies, storage or
-// document, nor take its keyboard.
+// document, nor take its keyboard. A link to another page of the same site
+// opens in its panel (HtmlPanel's default); elsewhere, in a new tab.
 
 // Each site's panel, made the first time it is chosen and kept (hidden, it
 // stops capturing), so that a site chosen again is as it was left.
@@ -69,7 +60,6 @@ function panelFor(site: Site): HtmlPanel {
       height: 720,
       size: SITE_SIZE,
       sandbox: true,
-      onLink: openLink,
     });
     panel.position.set(0, EYE_HEIGHT, -SITE_DISTANCE);
     sitePanels.set(site.name, panel);
