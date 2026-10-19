@@ -92,7 +92,7 @@ The agent must run before the page's own scripts, and names the host's origin. W
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/@urth/three-html-panel@0.2/lib/agent-script.js"
+  src="https://cdn.jsdelivr.net/npm/@urth/three-html-panel@0.3/lib/agent-script.js"
   data-host-origin="https://host.example"
 ></script>
 ```
