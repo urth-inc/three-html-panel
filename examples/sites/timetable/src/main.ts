@@ -1,5 +1,6 @@
 import "./agent";
 import "./style.css";
+import drawerCss from "./drawer.css?inline";
 import { loadSchedule, type Schedule, type Session } from "./schedule";
 import { tween } from "./tween";
 
@@ -11,9 +12,10 @@ import { tween } from "./tween";
 // whole page: no framework, system fonts, no images, and as few elements as
 // can be. A session or a card is one element: its other lines are pseudo-
 // elements showing its attributes (attr()), and its progress is a background.
-// Sessions out of view are taken out of the page, and the details are in it
-// only while open. It changes once a second at normal speed, and moves only
-// by script (see tween.ts).
+// Sessions out of view are taken out of the page, and the details (and their
+// stylesheet) are in it only while open. Buttons have no type: there is no
+// form for them to submit. It changes once a second at normal speed, and
+// moves only by script (see tween.ts).
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -126,6 +128,7 @@ const blocks: Block[] = [];
 const placed: Placed[] = [];
 let selected: Block | null = null;
 let drawer: Drawer | null = null;
+const drawerStyle = document.createElement("style");
 let userScrolledAt = -Infinity;
 const shownKeys = { now: "", next: "" };
 
@@ -175,7 +178,6 @@ function build(): void {
       const left = Math.round(xOf(session.start));
       const right = Math.round(xOf(session.end)) - 6;
       const element = el("button", "session", session.title);
-      element.type = "button";
       element.dataset.time = `${hm(session.start)}–${hm(session.end)}`;
       element.style.left = `${left}px`;
       element.style.width = `${right - left}px`;
@@ -215,9 +217,10 @@ function makeDrawer(): Drawer {
     description: el("p"),
   };
   const close = el("button", "", "閉じる");
-  close.type = "button";
   close.addEventListener("click", closeDrawer);
   element.append(parts.heading, parts.meta, parts.status, parts.description, close);
+  drawerStyle.textContent = drawerCss;
+  document.head.append(drawerStyle);
   main.append(element);
   tween(element, 1, 0, 280, slide(element), () => setStyle(element, "transform", null));
   return { element, ...parts };
@@ -255,14 +258,18 @@ function closeDrawer(): void {
   selected = null;
   const element = drawer?.element;
   drawer = null;
-  if (element) tween(element, 0, 1, 220, slide(element), () => element.remove());
+  if (!element) return;
+  tween(element, 0, 1, 220, slide(element), () => {
+    element.remove();
+    // Opened again meanwhile: the new details use the stylesheet.
+    if (!drawer) drawerStyle.remove();
+  });
 }
 
 // ---- Following the clock ----
 
 function card(session: Session, t: number): HTMLButtonElement {
   const button = el("button", "card", session.title);
-  button.type = "button";
   button.style.setProperty("--c", session.stage.color);
   button.dataset.meta = `${session.stage.name} · ${hm(session.start)}`;
   button.dataset.when = statusText(session, t);

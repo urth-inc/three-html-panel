@@ -14,6 +14,9 @@
   --muted: #8d97aa;
   --now: #ff5d73;
   color-scheme: dark;
+  /* Here, not after body's font: a longhand after the shorthand makes the
+     CSSOM write the shorthand out as all of its longhands. */
+  font-variant-numeric: tabular-nums;
 }
 
 * {
@@ -102,7 +105,6 @@ p {
   grid-area: 1 / 2 / 3;
   font-size: 34px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
 
@@ -161,7 +163,6 @@ p {
   position: relative;
   color: var(--muted);
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
 .ruler span {
@@ -190,8 +191,7 @@ p {
   display: flex;
   align-items: center;
   padding: 0 10px 0 14px;
-  border-left: 4px solid;
-  border-left-color: var(--c);
+  box-shadow: inset 4px 0 var(--c);
   font-size: 13px;
   font-weight: 600;
 }
@@ -215,10 +215,8 @@ p {
   outline-offset: -1px;
   outline-color: color-mix(in srgb, var(--c) 45%, transparent);
   background-color: color-mix(in srgb, var(--c) 16%, var(--panel));
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--c) 32%, transparent),
-    color-mix(in srgb, var(--c) 32%, transparent)
-  );
+  --fill: color-mix(in srgb, var(--c) 32%, transparent);
+  background-image: linear-gradient(var(--fill), var(--fill));
   background-size: var(--p, 0%) 100%;
   background-repeat: no-repeat;
   font-size: 14px;
@@ -233,7 +231,6 @@ p {
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  font-variant-numeric: tabular-nums;
 }
 
 .session:hover {
@@ -287,7 +284,6 @@ p {
   color: #fff;
   font-size: 12px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
   transform: translateX(-50%);
 }
 
@@ -321,9 +317,8 @@ p {
   width: 100%;
   padding: 10px 12px;
   border: 0;
-  border-left: 4px solid;
-  border-left-color: var(--c);
   border-radius: 10px;
+  box-shadow: inset 4px 0 var(--c);
   background-color: var(--raised);
   background-image: linear-gradient(var(--c), var(--c));
   background-size: var(--p, 0%) 3px;
@@ -341,7 +336,6 @@ p {
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-  font-variant-numeric: tabular-nums;
 }
 
 .card::before {
@@ -363,57 +357,7 @@ p {
   font-size: 13px;
 }
 
-/* ---- Details ---- */
-
-.drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 300px;
-  overflow-y: auto;
-  padding: 18px;
-  border-top: 4px solid;
-  border-top-color: var(--c);
-  border-left: 1px solid #273041;
-  background-color: var(--panel);
-  box-shadow: -12px 0 30px rgb(0 0 0 / 0.35);
-}
-
-.drawer h2 {
-  font-size: 18px;
-  line-height: 1.35;
-}
-
-.drawer-meta {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.drawer-status {
-  color: var(--c);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.drawer button {
-  margin-top: auto;
-  padding: 9px 10px;
-  border: 1px solid #273041;
-  border-radius: 10px;
-  background-color: var(--raised);
-  text-align: center;
-}
-
-.drawer button:hover {
-  border-color: #e9edf5;
-}
-
-/* Small panels (about 640 px wide): the timeline alone, the details over it. */
+/* Small panels (about 640 px wide): the timeline alone. */
 @media (max-width: 760px) {
   .body {
     grid-template-columns: 1fr;
@@ -431,9 +375,5 @@ p {
 
   .clock {
     font-size: 24px;
-  }
-
-  .drawer {
-    width: min(300px, 80%);
   }
 }
