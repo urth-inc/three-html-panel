@@ -152,7 +152,6 @@ export function defaultPixelRatio(): number {
   return phone ? 1 : 2;
 }
 
-/** Opens a link in a new tab, without giving the new page a way back to the host. */
 /**
  * Where a link goes by default: a page of the panel's own origin replaces the
  * page in the panel, as following a link does in a browser (a page of that
