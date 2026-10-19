@@ -8,8 +8,10 @@ import {
   parseInto,
   splitSelectorList,
   splitStatements,
+  requiredNames,
   rewriteSelector,
   signatureParts,
+  usedRuleTest,
   stylesheetsSignature,
   unwrapLiveSelector,
   writtenBlockOf,
@@ -19,6 +21,40 @@ describe("rewriteSelector", () => {
   it("maps :root to html, and rewrites as for the live page", () => {
     expect(rewriteSelector(":root")).toBe("html");
     expect(rewriteSelector(":root:hover")).toBe("html:is(:hover,[data-thp-hover])");
+  });
+});
+
+describe("usedRuleTest", () => {
+  it("looks for the element without its pseudo-elements and interaction states", () => {
+    expect(usedRuleTest(".btn:hover::after")).toBe(".btn");
+    expect(usedRuleTest(".tip:before")).toBe(".tip");
+    expect(usedRuleTest(".x:focus-visible, .y:focus-within > .z")).toBe(".x, .y > .z");
+    expect(usedRuleTest(".menu::-webkit-scrollbar-thumb:hover")).toBe(".menu");
+    // Without its :not(), not with an empty one: it matches at least as many.
+    expect(usedRuleTest(".x:not(:hover)")).toBe(".x");
+    expect(usedRuleTest(".x:not(.y)")).toBe(".x:not(.y)");
+  });
+
+  it("looks for the page's selector, not its live rewrite", () => {
+    expect(usedRuleTest(".a:is(:hover,[data-thp-hover]) .b")).toBe(".a .b");
+  });
+
+  it("is null when nothing is left to look for", () => {
+    expect(usedRuleTest("::selection")).toBeNull();
+    expect(usedRuleTest(":hover")).toBeNull();
+  });
+});
+
+describe("requiredNames", () => {
+  it("reads the classes and ids outside parentheses and brackets, for each selector of a list", () => {
+    expect(requiredNames(".card > .title#main, a.link:not(.off)[data-x='.y']")).toEqual([
+      { classes: ["card", "title"], ids: ["main"] },
+      { classes: ["link"], ids: [] },
+    ]);
+  });
+
+  it("is null for a selector with an escape", () => {
+    expect(requiredNames(".md\\:flex")).toBeNull();
   });
 });
 
