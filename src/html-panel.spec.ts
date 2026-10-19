@@ -8,7 +8,7 @@ import {
   type MeshBasicMaterial,
   type WebGLRenderer,
 } from "three";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { parseCssColor } from "./css-color";
 import type { FrameRenderer } from "./frame-renderer";
 import {
@@ -105,7 +105,7 @@ describe("the panel's iframe", () => {
     Object.defineProperty(HTMLIFrameElement.prototype, "src", {
       configurable: true,
       get(this: HTMLIFrameElement) {
-        return src.get!.call(this) as string;
+        return this.getAttribute("data-src") ?? (src.get!.call(this) as string);
       },
       set(this: HTMLIFrameElement, value: string) {
         sandboxAtSrc.push(this.getAttribute("sandbox"));
@@ -440,8 +440,9 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
-    it("opens links in a new tab, without a way back to the host, by default", async () => {
+    it("opens links to other origins in a new tab, without a way back to the host, by default", async () => {
       const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
       const panel = open(false);
       const port = connect(panel);
       panel.pointer("up", new Vector2(0.5, 0.5));
@@ -452,7 +453,64 @@ describe("the panel's iframe", () => {
         "_blank",
         "noopener,noreferrer",
       );
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
       port.close();
+    });
+
+    it("opens links to the panel's own origin in the panel, by default", async () => {
+      const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
+      const panel = open(true);
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      port.postMessage({ type: "open", url: "https://panel.example/other/?q=1" });
+      await delivered();
+      expect(windowOpen).not.toHaveBeenCalled();
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/other/?q=1");
+      // The page it opens is loaded sandboxed too, as the first.
+      expect(sandboxAtSrc.at(-1)).toBe(PANEL_SANDBOX);
+      // Another port of the same host is another origin: a new tab.
+      port.postMessage({ type: "open", url: "https://panel.example:8443/" });
+      await delivered();
+      expect(windowOpen).toHaveBeenCalledTimes(1);
+      port.close();
+    });
+
+    it("opens links to the host's own origin in a new tab, even from a panel on that origin", async () => {
+      const windowOpen = vi.spyOn(window, "open").mockReturnValue(null);
+      onTestFinished(() => windowOpen.mockRestore());
+      const page = new URL("/panel/", location.href).href;
+      const panel = open(true, undefined, { url: page });
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      const home = new URL("/", location.href).href;
+      port.postMessage({ type: "open", url: home });
+      await delivered();
+      expect(windowOpen).toHaveBeenCalledWith(home, "_blank", "noopener,noreferrer");
+      expect(panel.iframe.getAttribute("data-src")).toBe(page);
+      port.close();
+    });
+
+    it("goes back to the page it left when the page a link opened in the panel does not connect", async () => {
+      const onError = vi.fn();
+      const panel = open(true, undefined, { readyTimeout: 50, onError });
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      port.postMessage({ type: "open", url: "https://panel.example/manual.pdf" });
+      await delivered();
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/manual.pdf");
+      // The PDF loads, and no agent answers.
+      panel.iframe.dispatchEvent(new Event("load"));
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
+      expect((onError.mock.calls[0]![0] as Error).message).toContain("manual.pdf");
+      // Back on the page, which connects: a later failure is reported as usual, with no going back.
+      const back = connect(panel);
+      panel.iframe.dispatchEvent(new Event("load"));
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2));
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
+      port.close();
+      back.close();
     });
 
     describe("a tap on a text field", () => {

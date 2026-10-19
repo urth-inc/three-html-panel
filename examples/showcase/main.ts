@@ -69,15 +69,6 @@ const pageUrl = (path: string) => new URL(path, panelBase);
 // All pages run sandboxed (the iframes' sandbox attribute; the server of the
 // demo's own panel pages sends the same sandbox too, see vite.panels.config.ts):
 // none can reach the scene's cookies, storage or document, nor take its keyboard.
-/**
- * A link the user follows in a panel: to another page of the same site, it opens
- * in the panel (the page loads the agent too, and connects again); elsewhere,
- * in a new tab, as HtmlPanel does by default.
- */
-function openLink(url: URL, panel: HtmlPanel): void {
-  if (url.origin === panel.origin) panel.iframe.src = url.href;
-  else window.open(url.href, "_blank", "noopener,noreferrer");
-}
 
 interface PanelSpec {
   name: string;
@@ -97,7 +88,6 @@ const specs: PanelSpec[] = [
         height: 640,
         size: 1.6,
         sandbox: true,
-        onLink: openLink,
       }),
   },
   {
@@ -107,7 +97,6 @@ const specs: PanelSpec[] = [
       new HtmlPanel({
         url: pageUrl("examples/sites/controls/"),
         sandbox: true,
-        onLink: openLink,
         width: 480,
         height: 640,
         size: 1.0,
@@ -128,7 +117,6 @@ const specs: PanelSpec[] = [
         height: 720,
         size: 1.1,
         sandbox: true,
-        onLink: openLink,
       }),
   },
 ];

@@ -56,6 +56,8 @@ const panel = new HtmlPanel({
   sandbox: true,
   // Without WebGL the panel is never drawn: it would count as hidden.
   pauseWhenHidden: renderer !== null,
+  // &ready-timeout=<ms>: give up on a page without the agent sooner.
+  readyTimeout: params.has("ready-timeout") ? Number(params.get("ready-timeout")) : undefined,
 });
 scene.add(panel);
 // Rendering would do it; without WebGL, nothing else updates the matrices the pointer's raycast uses.
