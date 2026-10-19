@@ -398,19 +398,138 @@ export function inlineCssUrls(
 export const absolutizeUrls = (css: string, sheetUrl: string) =>
   inlineCssUrls(css, sheetUrl, (url) => url);
 
-const isNamespace = (rule: string) => rule.startsWith("@namespace");
+/**
+ * A rule as collected: kept as it is (a string), or kept only while the page
+ * uses it (see DocumentCss's `prune`): a style rule while its `test` selector
+ * matches an element, an @font-face while its `face` is not left unloaded. A
+ * block (@media's rules are inlined; @layer, @container…) holds pieces too.
+ */
+type CssPiece =
+  | string
+  | { css: string; test: string }
+  | { css: string; face: string }
+  | { open: string; pieces: CssPiece[] };
+
+const isNamespace = (piece: CssPiece) =>
+  typeof piece === "string" && piece.startsWith("@namespace");
+
+/** The piece with `map` applied to its CSS text (and to its blocks'). */
+function mapCss(piece: CssPiece, map: (css: string) => string): CssPiece {
+  if (typeof piece === "string") return map(piece);
+  if ("pieces" in piece)
+    return { open: map(piece.open), pieces: piece.pieces.map((inner) => mapCss(inner, map)) };
+  return { ...piece, css: map(piece.css) };
+}
+
+/** The piece's CSS, without the rules `keep` says are not used (null if nothing is left of it). */
+function renderPiece(piece: CssPiece, keep: (piece: CssPiece) => boolean): string | null {
+  if (typeof piece === "string") return piece;
+  if (!("pieces" in piece)) return keep(piece) ? piece.css : null;
+  const inner = piece.pieces.map((rule) => renderPiece(rule, keep)).filter((css) => css !== null);
+  // A block all of whose rules went: no block either.
+  if (piece.pieces.length > 0 && inner.length === 0) return null;
+  return `${piece.open}\n${inner.join("\n")}\n}`;
+}
 
 /**
  * A sheet's rules in the cascade layers it was imported into (outermost
  * first, "" for an anonymous one), as on the page: its @namespace rules stay
  * first, outside them (they cannot be in one).
  */
-function inLayers(rules: string[], layers: readonly string[]): string[] {
+function inLayers(rules: CssPiece[], layers: readonly string[]): CssPiece[] {
   if (layers.length === 0) return rules;
-  let layered = rules.filter((rule) => !isNamespace(rule)).join("\n");
+  let layered = rules.filter((rule) => !isNamespace(rule));
   for (const layer of [...layers].reverse())
-    layered = `@layer ${layer ? `${layer} ` : ""}{\n${layered}\n}`;
-  return [...rules.filter(isNamespace), layered];
+    layered = [{ open: `@layer ${layer ? `${layer} ` : ""}{`, pieces: layered }];
+  return [...rules.filter(isNamespace), ...layered];
+}
+
+// A :not() (with one level of parentheses inside), and an interaction state in one.
+const NOT_PSEUDO_CLASS = /:not\((?:[^()]|\([^()]*\))*\)/g;
+const INTERACTION_IN =
+  /:(hover|active|focus-visible|focus-within|focus|popover-open|modal)(?![-\w])/;
+// Pseudo-elements, and the legacy one-colon forms of the first four.
+const PSEUDO_ELEMENT = /::[-\w]+(?:\([^)]*\))?|:(?:before|after|first-line|first-letter)(?![-\w])/g;
+
+/**
+ * The selector to find out whether a style rule is used: one that matches at
+ * least the elements the rule styles. Its pseudo-elements go (an element that
+ * has one matches without), and so do its interaction states, so that hovering
+ * changes no answer (a :not() with one in it goes whole). Null when nothing
+ * is left to look for (`::selection`): such a rule is always kept, and so is
+ * one whose selector the page's browser does not take (see DocumentCss's prune).
+ */
+export function usedRuleTest(selector: string): string | null {
+  const plain = unwrapLiveSelector(selector)
+    .replace(PSEUDO_ELEMENT, "")
+    // Taking a state out of a :not() would match fewer elements: the whole :not() goes.
+    .replace(NOT_PSEUDO_CLASS, (not) => (INTERACTION_IN.test(not) ? "" : not));
+  const test = replaceInteractionPseudoClasses(plain, () => "").trim();
+  return test === "" ? null : test;
+}
+
+/** The classes and ids a selector's elements must have. */
+export interface RequiredNames {
+  classes: string[];
+  ids: string[];
+}
+
+const NAME = /^[-\w\u00a0-\uffff]+/;
+
+/**
+ * For each selector of a list, the classes and ids its elements must have:
+ * those outside parentheses (`:is()`, `:not()`, `:has()`…) and brackets. A
+ * page that has none of an element with one of them has nothing the selector
+ * matches, without looking. Null for a selector with an escape (`.md\:flex`),
+ * whose names are not read here.
+ */
+export function requiredNames(selector: string): RequiredNames[] | null {
+  if (selector.includes("\\")) return null;
+  return splitSelectorList(selector).map((part) => {
+    const names: RequiredNames = { classes: [], ids: [] };
+    let depth = 0;
+    for (let i = 0; i < part.length; i++) {
+      const char = part[i]!;
+      if (char === "(" || char === "[") depth++;
+      else if (char === ")" || char === "]") depth--;
+      else if (depth === 0 && (char === "." || char === "#")) {
+        const name = NAME.exec(part.slice(i + 1))?.[0];
+        if (!name) continue;
+        (char === "." ? names.classes : names.ids).push(name);
+        i += name.length;
+      }
+    }
+    return names;
+  });
+}
+
+const unquote = (family: string) =>
+  family
+    .trim()
+    .replace(/^(["'])(.*)\1$/, "$2")
+    .toLowerCase();
+
+/** What tells a font face from the others, as FontFace has it: the same for an @font-face rule and its FontFace. */
+const faceKey = (face: FontFace) =>
+  [unquote(face.family), face.style, face.weight, face.stretch, face.unicodeRange].join("|");
+
+/** The faceKey of an @font-face rule (through a FontFace, which writes its descriptors the same way), or null. */
+function fontFaceRuleKey(window: FrameWindow, rule: CSSRule & { style: CSSStyleDeclaration }) {
+  const descriptor = (name: string) => rule.style.getPropertyValue(name) || undefined;
+  const family = rule.style.getPropertyValue("font-family");
+  if (!family || typeof window.FontFace !== "function") return null;
+  try {
+    return faceKey(
+      new window.FontFace(unquote(family), "local(none)", {
+        style: descriptor("font-style"),
+        weight: descriptor("font-weight"),
+        stretch: descriptor("font-stretch"),
+        unicodeRange: descriptor("unicode-range"),
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -501,7 +620,20 @@ export const stylesheetsSignature = (parts: [CSSStyleSheet | null, string][]) =>
 export class DocumentCss {
   /** Null until collected (a page without stylesheets has the signature ""). */
   #signature: string | null = null;
-  #css: readonly string[] = [];
+  /** The sheets as collected, their url() inlined: rendered as CSS by get(). */
+  #sheets: CssPiece[][] = [];
+  /** The CSS get() rendered last, and for what (the version it was given, and #fontsVersion). */
+  #rendered: { key: string; css: readonly string[] } | null = null;
+  /** Bumped when a font face finished loading: an @font-face may be used now. */
+  #fontsVersion = 0;
+  /**
+   * The test selectors found to match: not looked for again until the sheets
+   * change. Kept once an element no longer matches (a rule too many is harmless),
+   * so that a change to the page looks only for the rules not used yet.
+   */
+  #matchedTests = new Set<string>();
+  /** requiredNames of each test selector, read once. */
+  readonly #names = new Map<string, RequiredNames[] | null>();
   #lost: LostDeclarations[] = [];
   /**
    * The lists of rules inside the sheets (of blocks, nested rules, imported
@@ -519,53 +651,153 @@ export class DocumentCss {
   readonly #document: Document;
   readonly #resolveUrl: (url: string) => string | null;
   readonly #onChange: () => void;
+  readonly #prune: boolean;
+  readonly #onFontsLoaded: () => void;
 
+  /**
+   * With `prune`, get() leaves out the rules the page does not use: the style
+   * rules whose selectors match no element, and the @font-face rules of faces
+   * the page never loaded (a browser loads a face only for text that uses it).
+   * Each frame's image has to parse and match all the CSS it is given, and a
+   * framework's stylesheet is mostly rules for elements a page does not have.
+   * `onFontsLoaded`: a face finished loading, so an @font-face may be used now.
+   */
   constructor(
     document: Document,
     resolveUrl: (url: string) => string | null,
     onChange: () => void = () => {},
+    {
+      prune = false,
+      onFontsLoaded = () => {},
+    }: { prune?: boolean; onFontsLoaded?: () => void } = {},
   ) {
     this.#document = document;
     this.#resolveUrl = resolveUrl;
     this.#onChange = onChange;
+    this.#prune = prune;
+    this.#onFontsLoaded = onFontsLoaded;
     this.#window = document.defaultView as FrameWindow;
+    if (prune) document.fonts?.addEventListener("loadingdone", this.#fontsLoaded);
   }
+
+  readonly #fontsLoaded = () => {
+    this.#fontsVersion++;
+    this.#onFontsLoaded();
+  };
 
   invalidate(): void {
     this.#signature = null;
+  }
+
+  dispose(): void {
+    this.#document.fonts?.removeEventListener("loadingdone", this.#fontsLoaded);
   }
 
   /**
    * The CSS, as sheets: one for each of the page's (an @import'ed one before
    * the sheet importing it), as some rules only count in their own sheet
    * (@namespace, which must come first in it).
+   *
+   * Pruning (see the constructor), `version` says when which elements the
+   * page's selectors match may have changed: the rules are looked for again
+   * only then. Without it, every rule is kept.
    */
-  get(): readonly string[] {
+  get(version?: number): readonly string[] {
     const sheets = pageStylesheets(this.#document);
     const signature = stylesheetsSignature(signatureParts(sheets));
     const changedInside = this.#inner.some(({ rules, length }) => rules.length !== length);
     if (signature !== this.#signature || changedInside) {
       this.#inner = [];
       this.#lost = [];
-      const out: string[][] = [[DEFAULT_FOCUS_RING_CSS]];
+      const out: CssPiece[][] = [[DEFAULT_FOCUS_RING_CSS]];
       for (const sheet of sheets) this.#serializeSheet(sheet, out);
       out.push([FREEZE_ANIMATIONS_CSS]);
+      const inline = (css: string) => inlineCssUrls(css, this.#document.baseURI, this.#resolveUrl);
       // A namespace's url() is a name, not a file to inline.
-      this.#css = out
+      this.#sheets = out
         .filter((rules) => rules.length > 0)
-        .map((rules) =>
-          [
-            ...rules.filter(isNamespace),
-            inlineCssUrls(
-              rules.filter((rule) => !isNamespace(rule)).join("\n"),
-              this.#document.baseURI,
-              this.#resolveUrl,
-            ),
-          ].join("\n"),
-        );
+        .map((rules) => rules.map((rule) => (isNamespace(rule) ? rule : mapCss(rule, inline))));
+      this.#rendered = null;
+      this.#matchedTests = new Set();
       this.#signature = signature;
     }
-    return this.#css;
+    const pruning = this.#prune && version !== undefined;
+    const key = pruning ? `${version}:${this.#fontsVersion}` : "all";
+    if (this.#rendered?.key !== key)
+      this.#rendered = { key, css: this.#render(pruning ? this.#usedRules() : () => true) };
+    return this.#rendered.css;
+  }
+
+  #render(keep: (piece: CssPiece) => boolean): readonly string[] {
+    return this.#sheets.map((rules) => {
+      const rest = rules
+        .filter((rule) => !isNamespace(rule))
+        .map((rule) => renderPiece(rule, keep))
+        .filter((css) => css !== null);
+      return [...(rules.filter(isNamespace) as string[]), rest.join("\n")].join("\n");
+    });
+  }
+
+  /** Whether a rule is used now: its selector matches an element, its font face is not left unloaded. */
+  #usedRules(): (piece: CssPiece) => boolean {
+    const unmatched = new Set<string>();
+    let present: { classes: Set<string>; ids: Set<string> } | null = null;
+    // In quirks mode, classes and ids match whatever their case.
+    const readNames = this.#document.compatMode !== "BackCompat";
+    let loadedFaces: Map<string, boolean> | null = null;
+    return (piece) => {
+      if (typeof piece === "string" || "pieces" in piece) return true;
+      if ("test" in piece) {
+        const { test } = piece;
+        if (this.#matchedTests.has(test)) return true;
+        if (unmatched.has(test)) return false;
+        let names = this.#names.get(test);
+        if (names === undefined) this.#names.set(test, (names = requiredNames(test)));
+        if (names && readNames) {
+          present ??= this.#presentNames();
+          const { classes, ids } = present;
+          const impossible = names.every(
+            (part) =>
+              part.classes.some((name) => !classes.has(name)) ||
+              part.ids.some((name) => !ids.has(name)),
+          );
+          if (impossible) {
+            unmatched.add(test);
+            return false;
+          }
+        }
+        let used: boolean;
+        try {
+          used = this.#document.querySelector(test) !== null;
+        } catch {
+          // Not a selector this browser takes as it is: kept, to be safe.
+          used = true;
+        }
+        if (used) this.#matchedTests.add(test);
+        else unmatched.add(test);
+        return used;
+      }
+      if (!loadedFaces) {
+        loadedFaces = new Map();
+        for (const face of this.#document.fonts ?? []) {
+          const faceUsed = face.status !== "unloaded";
+          loadedFaces.set(faceKey(face), (loadedFaces.get(faceKey(face)) ?? false) || faceUsed);
+        }
+      }
+      // A face the page does not list (not loaded yet, say) is kept.
+      return loadedFaces.get(piece.face) ?? true;
+    };
+  }
+
+  /** The classes and ids of the page's elements (those document selectors match: not in shadow trees). */
+  #presentNames(): { classes: Set<string>; ids: Set<string> } {
+    const classes = new Set<string>();
+    const ids = new Set<string>();
+    for (const element of Array.from(this.#document.getElementsByTagName("*"))) {
+      for (const name of Array.from(element.classList)) classes.add(name);
+      if (element.id) ids.add(element.id);
+    }
+    return { classes, ids };
   }
 
   /**
@@ -584,7 +816,7 @@ export class DocumentCss {
    */
   #serializeSheet(
     source: CSSStyleSheet,
-    sheets: string[][],
+    sheets: CssPiece[][],
     layers: string[] = [],
     imported = false,
   ): void {
@@ -602,7 +834,7 @@ export class DocumentCss {
     all.forEach((rule, index) => {
       if (rule instanceof CSSImportRule) leading = index + 1;
     });
-    const rules: string[] = [];
+    const rules: CssPiece[] = [];
     for (const rule of all.slice(0, leading)) {
       if (CSSLayerStatementRule && rule instanceof CSSLayerStatementRule)
         sheets.push(inLayers([rule.cssText], layers));
@@ -610,9 +842,11 @@ export class DocumentCss {
     }
     this.#serializeRules(all.slice(leading), rules, sheets, layers);
     if (source.href) {
+      const href = source.href;
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
-        if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
+        if (!isNamespace(rules[i]!))
+          rules[i] = mapCss(rules[i]!, (css) => absolutizeUrls(css, href));
     }
     sheets.push(inLayers(rules, layers));
   }
@@ -620,8 +854,8 @@ export class DocumentCss {
   /** `parent`: the selector of the style rule these are nested in (as a top-level one), if any. */
   #serializeRules(
     rules: ArrayLike<CSSRule>,
-    out: string[],
-    sheets: string[][],
+    out: CssPiece[],
+    sheets: CssPiece[][],
     layers: string[],
     parent: string | null = null,
   ): void {
@@ -633,6 +867,7 @@ export class DocumentCss {
       CSSKeyframesRule,
       CSSGroupingRule,
       CSSPageRule,
+      CSSFontFaceRule,
       CSS,
     } = this.#window;
     for (const rule of Array.from(rules)) {
@@ -644,15 +879,19 @@ export class DocumentCss {
         const selector = nestedSelector(parent, rule.selectorText);
         this.#noteLost(rule, selector);
         if (rule.cssRules.length === 0) {
-          out.push(`${rewriteSelector(rule.selectorText)}{${declarationsOf(rule)}}`);
+          const css = `${rewriteSelector(rule.selectorText)}{${declarationsOf(rule)}}`;
+          // A nested rule's selector is relative to its parent's: kept.
+          const test = parent === null ? usedRuleTest(rule.selectorText) : null;
+          out.push(test === null ? css : { css, test });
           continue;
         }
         // Nested rules (CSS nesting) are copied as the top level's, inside it.
-        const inner: string[] = [];
+        const inner: CssPiece[] = [];
         this.#serializeRules(rule.cssRules, inner, sheets, layers, selector);
-        out.push(
-          `${rewriteSelector(rule.selectorText)} {${rule.style.cssText}\n${inner.join("\n")}\n}`,
-        );
+        out.push({
+          open: `${rewriteSelector(rule.selectorText)} {${rule.style.cssText}`,
+          pieces: inner,
+        });
       } else if (rule instanceof CSSMediaRule) {
         if (this.#window.matchMedia(rule.conditionText).matches)
           this.#serializeRules(rule.cssRules, out, sheets, layers, parent);
@@ -680,10 +919,13 @@ export class DocumentCss {
       ) {
         // Other blocks of rules (@layer, @container, @scope…): their rules as
         // the top level's (interaction states, @media checked here), in them.
-        const inner: string[] = [];
+        const inner: CssPiece[] = [];
         this.#serializeRules(rule.cssRules, inner, sheets, layers, parent);
         const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{")).trim();
-        out.push(`${rewriteSelector(prelude)} {\n${inner.join("\n")}\n}`);
+        out.push({ open: `${rewriteSelector(prelude)} {`, pieces: inner });
+      } else if (CSSFontFaceRule && rule instanceof CSSFontFaceRule) {
+        const face = fontFaceRuleKey(this.#window, rule);
+        out.push(face === null ? rule.cssText : { css: rule.cssText, face });
       } else {
         // Declarations between nested rules (CSSNestedDeclarations) are its parent's.
         if (parent !== null && "style" in rule) this.#noteLost(rule as CSSStyleRule, parent);

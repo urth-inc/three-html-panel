@@ -163,6 +163,12 @@ export class PageCapture {
    * (:checked, :valid), which changes no attribute.
    */
   #matchVersion = 0;
+  /**
+   * The same, but for the page's own changes only, not the agent's interaction
+   * marks: which of the page's rules are used (DocumentCss's prune) does not
+   * depend on them, and is not looked for again on every hover.
+   */
+  #ruleVersion = 0;
   #started = false;
   #disposed = false;
   /**
@@ -194,6 +200,7 @@ export class PageCapture {
         this.#liveCss.reset();
         this.#changed();
       },
+      { prune: true, onFontsLoaded: () => this.#changed() },
     );
     this.#liveCss = new LiveInteractionCss(
       document,
@@ -214,6 +221,7 @@ export class PageCapture {
           record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
       );
       if (changes.length === 0) return;
+      this.#ruleVersion++;
       for (const { attributeName, target } of changes)
         this.#openOrder.attributeChanged(target, attributeName);
       if (changes.some((record) => record.type !== "attributes")) this.#textVersion++;
@@ -326,6 +334,7 @@ export class PageCapture {
     clearTimeout(this.#timer);
     this.#input.dispose();
     this.#liveCss.dispose();
+    this.#css.dispose();
     this.#mutations.disconnect();
     this.#restoreAttachShadow();
     for (const type of INVALIDATING_EVENTS)
@@ -365,6 +374,7 @@ export class PageCapture {
 
   readonly #stateChanged = () => {
     this.#matchVersion++;
+    this.#ruleVersion++;
   };
 
   readonly #transitionRan = () => {
@@ -460,7 +470,7 @@ export class PageCapture {
         ? selectionColorAt(this.#window, range)
         : undefined;
     // Collected first: the snapshot takes what the CSSOM lost of it from the page (DocumentCss.lost).
-    const sheets = this.#css.get();
+    const sheets = this.#css.get(this.#ruleVersion);
     this.#shadowStyles.version = `${this.#layoutVersion}:${this.#matchVersion}`;
     const drawnShadowRoots: ShadowRoot[] = [];
     // The snapshot measures scrolled text fields with a mirror (caret.ts).

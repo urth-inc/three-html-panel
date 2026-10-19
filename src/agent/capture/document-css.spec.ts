@@ -26,6 +26,87 @@ describe("DocumentCss", () => {
     expect(css).toContain('"use :hover"');
   });
 
+  it("leaves out the style rules no element matches when pruning, and only then", () => {
+    document.head.innerHTML =
+      "<style>.used { color: red } .unused { color: blue } .used:hover::after { content: 'x' } ::selection { color: green }</style>";
+    document.body.innerHTML = '<p class="used"></p>';
+    const css = new DocumentCss(document, () => null, undefined, { prune: true });
+    const pruned = css.get(0).join("\n");
+    expect(pruned).toContain(".used{");
+    expect(pruned).toContain("::after");
+    expect(pruned).toContain("::selection");
+    expect(pruned).not.toContain(".unused");
+    // Without a version (or without prune), every rule.
+    expect(css.get().join("\n")).toContain(".unused");
+    document.body.innerHTML = "";
+  });
+
+  it("looks for the rules again only for another version", () => {
+    document.head.innerHTML = "<style>.later { color: red }</style>";
+    const css = new DocumentCss(document, () => null, undefined, { prune: true });
+    expect(css.get(1).join("\n")).not.toContain(".later");
+    document.body.innerHTML = '<p class="later"></p>';
+    expect(css.get(1).join("\n")).not.toContain(".later");
+    expect(css.get(2).join("\n")).toContain(".later");
+    document.body.innerHTML = "";
+  });
+
+  it("leaves out the @font-face rules of faces the page never loaded", () => {
+    class FakeFontFace {
+      status = "unloaded";
+      style: string;
+      weight: string;
+      stretch: string;
+      unicodeRange: string;
+      constructor(
+        readonly family: string,
+        _source: string,
+        descriptors: {
+          style?: string;
+          weight?: string;
+          stretch?: string;
+          unicodeRange?: string;
+        } = {},
+      ) {
+        this.style = descriptors.style ?? "normal";
+        this.weight = descriptors.weight ?? "normal";
+        this.stretch = descriptors.stretch ?? "normal";
+        this.unicodeRange = descriptors.unicodeRange ?? "U+0-10FFFF";
+      }
+    }
+    vi.stubGlobal("FontFace", FakeFontFace);
+    const regular = Object.assign(new FakeFontFace('"Inter"', "", { weight: "400" }), {
+      status: "loaded",
+    });
+    const bold = new FakeFontFace('"Inter"', "", { weight: "700" });
+    const fonts = Object.assign([regular, bold], {
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
+    document.head.innerHTML =
+      "<style>@font-face { font-family: Inter; font-weight: 400 }" +
+      "@font-face { font-family: Inter; font-weight: 700 }" +
+      "@font-face { font-family: Other }</style>";
+    const css = new DocumentCss(document, () => null, undefined, { prune: true }).get(0).join("\n");
+    // (jsdom leaves src out of an @font-face's text.)
+    expect(css).toContain("font-weight: 400");
+    expect(css).not.toContain("font-weight: 700");
+    // A face the page does not list: kept.
+    expect(css).toContain("font-family: Other");
+    delete (document as { fonts?: unknown }).fonts;
+  });
+
+  it("drops a block all of whose rules went", () => {
+    document.head.innerHTML =
+      "<style>@layer ui { .unused { color: red } } @layer base { .x:not(:hover) { color: blue } }</style>";
+    document.body.innerHTML = '<p class="x"></p>';
+    const css = new DocumentCss(document, () => null, undefined, { prune: true }).get(0).join("\n");
+    expect(css).not.toContain("@layer ui");
+    expect(css).toContain("@layer base");
+    document.body.innerHTML = "";
+  });
+
   it("draws the default focus ring of a field only where focus shows", () => {
     const css = new DocumentCss(document, () => null).get().join("\n");
     expect(css).toContain("select[data-thp-focus-visible]");
