@@ -169,6 +169,10 @@ export class FrameRenderer {
       this.released = null;
       this.context.fillStyle = this.options.background;
       this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      // Made again at this size: if three.js drew the panel while it was let go
+      // of (seen from behind, say), it made the texture from the 1x1 canvas, and
+      // a texture keeps its size once uploaded (the picture would stay black).
+      this.texture.dispose();
       this.texture.needsUpdate = true;
       this.pending ??= this.drawn;
     }
@@ -184,8 +188,10 @@ export class FrameRenderer {
     if (!this.paused || this.released || this.disposed) return;
     this.released = { width: this.canvas.width, height: this.canvas.height };
     this.texture.dispose();
-    this.canvas.width = 0;
-    this.canvas.height = 0;
+    // 1x1, not 0x0: three.js may make the texture from the canvas meanwhile (if it
+    // draws the panel, seen from behind, say), and WebGL refuses a 0x0 texture.
+    this.canvas.width = 1;
+    this.canvas.height = 1;
   }
 
   /**
