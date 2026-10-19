@@ -105,7 +105,7 @@ describe("the panel's iframe", () => {
     Object.defineProperty(HTMLIFrameElement.prototype, "src", {
       configurable: true,
       get(this: HTMLIFrameElement) {
-        return src.get!.call(this) as string;
+        return this.getAttribute("data-src") ?? (src.get!.call(this) as string);
       },
       set(this: HTMLIFrameElement, value: string) {
         sandboxAtSrc.push(this.getAttribute("sandbox"));
@@ -474,6 +474,28 @@ describe("the panel's iframe", () => {
       await delivered();
       expect(windowOpen).toHaveBeenCalledTimes(1);
       port.close();
+    });
+
+    it("goes back to the page it left when the page a link opened in the panel does not connect", async () => {
+      const onError = vi.fn();
+      const panel = open(true, undefined, { readyTimeout: 50, onError });
+      const port = connect(panel);
+      panel.pointer("up", new Vector2(0.5, 0.5));
+      port.postMessage({ type: "open", url: "https://panel.example/manual.pdf" });
+      await delivered();
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/manual.pdf");
+      // The PDF loads, and no agent answers.
+      panel.iframe.dispatchEvent(new Event("load"));
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
+      expect((onError.mock.calls[0]![0] as Error).message).toContain("manual.pdf");
+      // Back on the page, which connects: a later failure is reported as usual, with no going back.
+      const back = connect(panel);
+      panel.iframe.dispatchEvent(new Event("load"));
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2));
+      expect(panel.iframe.getAttribute("data-src")).toBe("https://panel.example/page/");
+      port.close();
+      back.close();
     });
 
     describe("a tap on a text field", () => {

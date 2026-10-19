@@ -152,17 +152,6 @@ export function defaultPixelRatio(): number {
   return phone ? 1 : 2;
 }
 
-/**
- * Where a link goes by default: a page of the panel's own origin replaces the
- * page in the panel, as following a link does in a browser (a page of that
- * origin loads the agent too); any other opens in a new tab, with no way back
- * to the host.
- */
-function openLink(url: URL, panel: HtmlPanel): void {
-  if (url.origin === panel.origin) panel.iframe.src = url.href;
-  else window.open(url.href, "_blank", "noopener,noreferrer");
-}
-
 /** The caret's color before the page has sent one that can be read: the usual one, opaque black. */
 const DEFAULT_CARET_COLOR: SrgbColor = { r: 0, g: 0, b: 0, alpha: 1 };
 
@@ -215,6 +204,8 @@ export class HtmlPanel
   private resolution = 0;
   private readonly onError: (error: Error) => void;
   private readonly connection: PanelConnection;
+  /** A link opened in the panel whose page has not connected yet: the page it left, and its own. */
+  private followed: { from: string; to: string } | null = null;
   private editing = false;
   /** A text field or editable has focus, as the page reports: text can be typed. */
   private typing = false;
@@ -328,6 +319,7 @@ export class HtmlPanel
       readyTimeout: options.readyTimeout,
       optimizeHover: options.optimizeHover,
       onConnect: () => {
+        this.followed = null;
         this.pressing = false;
         this.editables = [];
         this.pointersSent = 0;
@@ -349,12 +341,27 @@ export class HtmlPanel
       onOpen: (url) => {
         // Not on its own: a page cannot open tabs, sandboxed or not, unless the user just acted on it.
         if (performance.now() > this.userActionUntil) return;
-        (options.onLink ?? openLink)(new URL(url), this);
+        if (options.onLink) options.onLink(new URL(url), this);
+        else this.openLink(new URL(url));
       },
       onMessage: (data) => options.onMessage?.(data),
       onError: (error) => {
-        this.renderer.clear();
         this.setEditing(false, null, false);
+        const followed = this.followed;
+        if (followed) {
+          // The page a link went to has no agent (a PDF, say): back to the page
+          // it left, whose picture stays meanwhile. Too late for a new tab: the
+          // browser blocks one this long after the user acted.
+          this.followed = null;
+          this.iframe.src = followed.from;
+          this.onError(
+            new Error(`went back, as the page of a link did not connect: ${followed.to}`, {
+              cause: error,
+            }),
+          );
+          return;
+        }
+        this.renderer.clear();
         this.onError(error);
       },
     });
@@ -387,6 +394,22 @@ export class HtmlPanel
     this.keyboard.register(iframe, { sandboxed: this.sandboxed });
     iframe.src = url.href;
     container.appendChild(iframe);
+  }
+
+  /**
+   * Where a link goes by default: a page of the panel's own origin replaces the
+   * page in the panel, as following a link does in a browser (a page of that
+   * origin loads the agent too); any other opens in a new tab, with no way back
+   * to the host. If the page in the panel does not connect, the panel goes back
+   * (see onError).
+   */
+  private openLink(url: URL): void {
+    if (url.origin !== this.origin) {
+      window.open(url.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    this.followed = { from: this.iframe.src, to: url.href };
+    this.iframe.src = url.href;
   }
 
   /** Drawn for `camera`: seen, if from the front (the back is a plain plane). */

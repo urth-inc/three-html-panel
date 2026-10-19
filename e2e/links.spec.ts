@@ -42,6 +42,30 @@ test("opens a link to the panel's own origin in the panel, and draws the page th
   expect(page.context().pages()).toHaveLength(1);
 });
 
+test("goes back to the page it left when the page a link opened in the panel has no agent", async ({
+  page,
+}) => {
+  panel = await PanelPage.open(page, "inbox", 720, 480, "&ready-timeout=2000");
+  // A page of the panel's origin without the agent (a PDF or a 404 page, say).
+  await page
+    .context()
+    .route("**/examples/sites/no-agent/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>No agent here</p>" }),
+    );
+  const point = await addLink("../no-agent/");
+  await panel.click(point);
+  await expect
+    .poll(() => page.frames().some((frame) => frame.url().includes("/examples/sites/no-agent/")))
+    .toBe(true);
+  const framesBefore = await page.evaluate(() => window.harness.frames);
+  // After the timeout, the panel's iframe is back on the inbox, which connects and draws again.
+  await expect
+    .poll(() => page.frames().some((frame) => frame.url().includes("/examples/sites/inbox/")))
+    .toBe(true);
+  await expect.poll(() => page.evaluate(() => window.harness.frames)).toBeGreaterThan(framesBefore);
+  expect(page.context().pages()).toHaveLength(1);
+});
+
 test("opens a link to another origin in a new tab", async ({ page }) => {
   // Not loaded: the tab is what matters.
   await page.context().route("https://example.com/**", (route) => route.fulfill({ body: "" }));

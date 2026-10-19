@@ -73,7 +73,7 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 | `onMessage`       |                 | Data the page sent with `sendToHost()`                        |
 | `onError`         | `console.warn`  | The agent did not connect, or speaks another protocol         |
 
-By default, a link to the panel's own origin opens in the panel (the page there loads the agent too, and the panel connects to it again), and a link to any other origin in a new tab of the host's browser. A link to another port or subdomain is another origin.
+By default, a link to the panel's own origin opens in the panel (the page there loads the agent too, and the panel connects to it again), and a link to any other origin in a new tab of the host's browser. A link to another port or subdomain is another origin. If the page a link opened in the panel does not connect within `readyTimeout` (a PDF, or a page without the agent), the panel goes back to the page it left and reports it to `onError`; it does not open a tab then, which the browser would block that long after the click.
 
 ### Adding the agent to a page
 
