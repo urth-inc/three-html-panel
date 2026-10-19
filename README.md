@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/@urth/three-html-panel)](LICENSE)
 [![bundle size](https://deno.bundlejs.com/badge?q=@urth/three-html-panel&config=%7B%22esbuild%22%3A%7B%22external%22%3A%5B%22three%22%5D%7D%7D)](https://bundlejs.com/?q=@urth/three-html-panel&config=%7B%22esbuild%22%3A%7B%22external%22%3A%5B%22three%22%5D%7D%7D)
 
-Show existing web pages — scripts included, from any origin — as interactive panels in a three.js scene.
+Show web pages you control — scripts included, on any origin — as interactive panels in a three.js scene.
 
 [![Real sites (React, Vue, Svelte and plain HTML, each on its own origin) used as panels in a three.js scene: typing, filtering and scrolling](docs/demo.webp)](https://three-html-panel-demo.pages.dev/)
 
@@ -27,6 +27,14 @@ Show existing web pages — scripts included, from any origin — as interactive
 ```
 
 The page runs in an `<iframe>` and loads a small script, the **agent**. The agent copies the page into an SVG `<foreignObject>`, which the host draws into a texture, and replays the host's input in the page as DOM events.
+
+### Before you start
+
+- **Every page shown must load the agent.** Pages you build or serve can (one `<script>` tag, see [Adding the agent to a page](#adding-the-agent-to-a-page)); a server or proxy you run can insert it into others. Sites you do not control, such as google.com or YouTube, cannot be shown: this is not a browser in 3D. The agent is how a page agrees to be shown, and only to the host origins it names.
+- **What the page loads from other origins needs CORS to be drawn**: images, stylesheets, fonts and video. Without it, an image is not drawn and a video shows only its poster.
+- **Embeds are not drawn**: iframes inside the page from other origins (videos, maps, ads, sign-in buttons) are left out.
+- **Native widgets the browser draws over the page are not drawn**, such as date pickers and video controls (`<select>`'s list is). See [Limitations](#limitations) for the rest.
+- **Each frame is a copy of the page, rasterized and uploaded as a texture**: a large DOM is slower to capture, and a large or sharp panel costs more to update. See [Performance](#performance).
 
 ## Install
 
