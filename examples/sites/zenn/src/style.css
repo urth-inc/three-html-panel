@@ -3,11 +3,6 @@
    No var() in shorthands (background, border, ...): the panel's copy would
    write their computed values into every element's style. */
 
-:root {
-  color-scheme: light;
-  font-variant-numeric: tabular-nums;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -29,31 +24,16 @@ body {
   overflow: hidden;
 }
 
-h1,
-p {
-  margin: 0;
-}
-
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.top {
-  padding: 16px 20px 10px;
-}
-
-.top h1 {
-  font-size: 22px;
-}
-
-/* In place of the articles, when there are none or they could not be read. */
-.message {
+h1 {
   margin: 0;
-  padding: 16px 4px;
-  color: #6b7280;
-  font-size: 14px;
+  padding: 16px 20px 10px;
+  font-size: 22px;
 }
 
 /* ---- Tabs ---- */

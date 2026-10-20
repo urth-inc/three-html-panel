@@ -76,10 +76,13 @@ function place(): void {
   rows.replaceChildren(...elements);
 }
 
-/** Shows a line in place of the articles (there are none, or they could not be read). */
+/**
+ * Shows a line in place of the articles (there are none, or they could not be
+ * read). Styled on itself: a rule for it would be copied on every frame.
+ */
 function say(text: string): void {
   const line = document.createElement("p");
-  line.className = "message";
+  line.style.cssText = "margin:0;padding:16px 4px;color:#6b7280;font-size:14px";
   line.textContent = text;
   rows.replaceChildren(line);
 }

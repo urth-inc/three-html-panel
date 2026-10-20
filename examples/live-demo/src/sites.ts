@@ -13,7 +13,7 @@ export interface Site {
 /** The sites, in the order the switcher lists them; the first is shown first. */
 const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
   zenn: {
-    title: "Zenn",
+    title: "Zenn RSS Reader",
     stack: "HTML · CSS · TS · Pages Functions",
     description: "Zenn's RSS feeds, trending and by topic, read through a Pages Function.",
   },
