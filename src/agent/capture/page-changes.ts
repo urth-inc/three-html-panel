@@ -10,6 +10,8 @@ export class PageChanges {
   readonly #own = new WeakMap<Node, number>();
   /** The last change to each element or to anything in it. */
   readonly #within = new WeakMap<Node, number>();
+  /** The last scroll of each element or of anything in it (a scroll changes no style: kept apart). */
+  readonly #scrolledWithin = new WeakMap<Node, number>();
 
   /** How many changes were noted so far: what an element's changes are compared with. */
   get count(): number {
@@ -28,6 +30,18 @@ export class PageChanges {
     if (!element) return;
     this.#own.set(element, count);
     for (; element; element = parentOf(element)) this.#within.set(element, count);
+  }
+
+  /** Notes that an element scrolled: what is in it shows elsewhere, though nothing in it changed. */
+  scrolled(element: Element): void {
+    const count = ++this.#count;
+    for (let node: Node | null = element; node; node = parentOf(node))
+      this.#scrolledWithin.set(node, count);
+  }
+
+  /** The last scroll of an element or of anything in it (0 if none was noted). */
+  scrolledWithin(element: Element): number {
+    return this.#scrolledWithin.get(element) ?? 0;
   }
 
   /** The last change to an element itself (0 if none was noted). */

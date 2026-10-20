@@ -42,6 +42,7 @@ import {
   matchLostDeclarations,
   snapshotDocument,
   type AnimatedProperties,
+  type CachedContent,
   type LeaveOut,
   type ListBoxRow,
   type LostMatches,
@@ -54,8 +55,12 @@ import { rememberShadowRoot } from "../flat-tree";
 /** Events after which a form control's state (:checked, :valid…) may have changed, with no attribute. */
 const STATE_EVENTS = ["input", "change"];
 
-/** Events that change their target, maybe how what is in it is laid out, and change no attribute (see PageChanges). */
-const CHANGING_EVENTS = [...STATE_EVENTS, "toggle"];
+/**
+ * Events that change their target, maybe how what is in it is laid out, and
+ * change no attribute (see PageChanges): a form control's state, a popover's,
+ * an image's size once it loads.
+ */
+const CHANGING_EVENTS = [...STATE_EVENTS, "toggle", "load", "error"];
 
 /**
  * CSS that makes what is in one box change how another shows (a counter
@@ -142,6 +147,7 @@ export class PageCapture {
   /** Where the page changed, and what the snapshots found in its boxes (see LeaveOut). */
   readonly #changes = new PageChanges();
   readonly #summaries = new WeakMap<Element, SubtreeSummary>();
+  readonly #contents = new WeakMap<Element, CachedContent>();
   /** Bumped when what is in the page's boxes may have changed everywhere (see LeaveOut.version). */
   #leaveOutEpoch = 0;
   /** Whether the page's CSS lets boxes be copied empty (see NONLOCAL_CSS), by the sheets DocumentCss gave. */
@@ -229,7 +235,14 @@ export class PageCapture {
         this.#leaveOutEpoch++;
         this.#changed();
       },
-      { prune: true, onFontsLoaded: () => this.#changed() },
+      {
+        prune: true,
+        // Text may be laid out otherwise anywhere.
+        onFontsLoaded: () => {
+          this.#leaveOutEpoch++;
+          this.#changed();
+        },
+      },
     );
     this.#liveCss = new LiveInteractionCss(
       document,
@@ -302,6 +315,7 @@ export class PageCapture {
     for (const type of CHANGING_EVENTS)
       this.#window.addEventListener(type, this.#targetChanged, true);
     this.#window.addEventListener("resize", this.#resized, true);
+    this.#window.addEventListener("scroll", this.#scrolled, true);
     // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
     // of elements do not reach the window.
     document.addEventListener("load", this.#stylesheetsChanged, true);
@@ -380,6 +394,7 @@ export class PageCapture {
     for (const type of CHANGING_EVENTS)
       this.#window.removeEventListener(type, this.#targetChanged, true);
     this.#window.removeEventListener("resize", this.#resized, true);
+    this.#window.removeEventListener("scroll", this.#scrolled, true);
     this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
     this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
     this.#openOrder.dispose();
@@ -419,6 +434,13 @@ export class PageCapture {
   readonly #targetChanged = (event: Event) => {
     const target = event.target as Node | null;
     if (target?.nodeType === Node.ELEMENT_NODE) this.#changes.changed(target);
+  };
+
+  /** An element scrolled (the document's scroll is the viewport's: nothing in the page moves in it). */
+  readonly #scrolled = (event: Event) => {
+    const target = event.target as Node | null;
+    if (target?.nodeType === Node.ELEMENT_NODE && target !== this.#document.scrollingElement)
+      this.#changes.scrolled(target as Element);
   };
 
   /** Media queries may match otherwise: any rule may apply now. */
@@ -581,6 +603,7 @@ export class PageCapture {
       relational,
       anchors: this.#localCss.anchors || !!this.#document.querySelector('[style*="anchor-name"]'),
       margin: { x: width / 4, y: height / 4 },
+      contents: this.#contents,
     };
   }
 

@@ -69,6 +69,16 @@ const KEPT_WHOLE = new Set([
   "SLOT",
 ]);
 
+/** Elements whose content is never kept (see CachedContent): it is copied from their state, not their children. */
+const NOT_KEPT = new Set(["HTML", "HEAD", "SELECT", "DATALIST", "OPTGROUP", "OPTION", "TEXTAREA"]);
+
+/** How kept content is marked in the copy (see Snapshotter.contentMark). */
+const CONTENT_MARK = "thp-content:";
+const CONTENT_MARKS = new RegExp(`<!--${CONTENT_MARK}(\\d+)-->`, "g");
+
+/** How an image was copied (its src, and the size it is held at): see CachedContent.images. */
+const imageKey = (copy: Element) => `${copy.getAttribute("src")}\n${copy.getAttribute("style")}`;
+
 /** The display of a box laid out as a block (an inline-flex flex item's is flex already). */
 const BLOCK_LEVEL_BOX = /^(block|flow-root|list-item|flex|grid)$/;
 
@@ -178,6 +188,43 @@ export interface LeaveOut {
   anchors: boolean;
   /** How far out of view a box must be (CSS px, across and down): what is in it may show past it by less. */
   margin: { x: number; y: number };
+  /**
+   * What is in elements, as copied and serialized by an earlier snapshot: an
+   * element whose subtree did not change since (see CachedContent) gets it
+   * again, rather than its subtree being copied and serialized once more.
+   */
+  readonly contents: WeakMap<Element, CachedContent>;
+}
+
+/**
+ * What is in an element, as an earlier snapshot copied it (its children,
+ * serialized), kept while nothing in it changes, nor scrolls (PageChanges).
+ * Only what is copied the same way while that holds is kept: no copy in it
+ * depends on the page's scroll, on time, or on computed values (a scroll
+ * container, a form control, a canvas or a video, an animated value, a box
+ * left out, a mark for a rule of its own), and nothing in it is placed from
+ * outside it (see SubtreeSummary.contained). Its images depend on where they
+ * are (see farFromView) and on what has arrived (an image's data URL): how
+ * each was copied is checked again before what is in it is used.
+ */
+export interface CachedContent {
+  /** LeaveOut.version then. */
+  version: string;
+  /** PageChanges.count then. */
+  at: number;
+  /** The element's children, serialized. */
+  xhtml: string;
+  /** The images in it, and how each was copied (see imageKey). */
+  images: readonly CopiedImage[];
+  /** As SubtreeSummary.zIndexed and SubtreeSummary.lines. */
+  zIndexed: boolean;
+  lines: boolean;
+}
+
+/** An image copied, and how (see imageKey). */
+interface CopiedImage {
+  live: Element;
+  key: string;
 }
 
 /** What a snapshot found in an element's subtree, when it copied it all (see LeaveOut). */
@@ -799,6 +846,25 @@ class Snapshotter {
   #ancestorChange = 0;
   /** What shows of the children of the element being copied: the viewport, cut by their scroll containers. */
   #clip: Edges;
+  /**
+   * How many copies so far depend on something other than the page's
+   * elements, their attributes and their text (see CachedContent): what is
+   * in an element whose copy did not bump it can be used again.
+   */
+  #unsteady = 0;
+  /** The images copied so far, and how (see CachedContent.images). */
+  readonly #images: CopiedImage[] = [];
+  /** The elements whose content is to be kept, with their copies (see keepContents). */
+  readonly #keep = new Map<
+    Element,
+    { copy: Element; clip: Edges; content: Omit<CachedContent, "xhtml"> }
+  >();
+  /** Serialized content in the copy, each where a comment with its index stands (see contentMark). */
+  readonly #contents: string[] = [];
+  /** The element copy() used kept content for last. */
+  #reusedElement: Element | null = null;
+  /** The elements with an animated or lost value, and their parents (see unsteadyAncestors), found once needed. */
+  #unsteadyAncestors: Set<Element> | null = null;
 
   readonly #document: Document;
   readonly #options: SnapshotOptions;
@@ -839,16 +905,40 @@ class Snapshotter {
     this.#depthOf.set(element, depth);
     // The page's CSS can point to it (a gradient, a clip path, a symbol for <use>).
     if (element.namespaceURI === SVG_NAMESPACE && element.id) this.#ownReach = -1;
+    const [unsteady, rules, images] = [
+      this.#unsteady,
+      this.generatedRules.length,
+      this.#images.length,
+    ];
     const copy = this.#copyElement(element);
     this.#depth--;
-    if (this.#leftOutElement !== element && !this.#inShadow && element.firstChild) {
-      leaveOut.summaries.set(element, {
+    const walked =
+      this.#leftOutElement !== element &&
+      this.#reusedElement !== element &&
+      !this.#inShadow &&
+      !!element.firstChild;
+    if (walked) {
+      const summary = {
         version: leaveOut.version,
         at: this.#changesAt,
         contained: this.#reach >= depth,
         zIndexed: this.#zIndexed,
         lines: this.#lines.get(element) ?? false,
-      });
+      };
+      leaveOut.summaries.set(element, summary);
+      // Copied the same way while nothing in it changes: kept (see keepContents).
+      if (
+        summary.contained &&
+        copy instanceof Element &&
+        this.#unsteady === unsteady &&
+        this.generatedRules.length === rules &&
+        !NOT_KEPT.has(element.tagName)
+      )
+        this.#keep.set(element, {
+          copy,
+          clip: this.#clipFor(this.#styles.get(element)!),
+          content: { ...summary, images: this.#images.slice(images) },
+        });
     }
     const style = this.#styles.get(element);
     // Boxes placed from it (position-anchor) may be anywhere.
@@ -894,6 +984,12 @@ class Snapshotter {
       this.#ownReach = -1;
     }
 
+    // A canvas or a video shows what it draws, which changes nothing in the page.
+    if (
+      element instanceof this.#window.HTMLCanvasElement ||
+      element instanceof this.#window.HTMLVideoElement
+    )
+      this.#unsteady++;
     if (element instanceof this.#window.HTMLCanvasElement)
       return this.#remember(
         element,
@@ -914,6 +1010,8 @@ class Snapshotter {
     ) as Element;
     this.#copyFormState(element, copy);
     this.#copyImage(element, copy, style);
+    if (this.#options.leaveOut && element instanceof this.#window.HTMLImageElement)
+      this.#images.push({ live: element, key: imageKey(copy) });
     this.#copyAnimatedValues(element, copy);
     this.#copyLostPseudoValues(element, copy);
     this.#copyIndeterminateProgress(element, copy, style);
@@ -928,6 +1026,7 @@ class Snapshotter {
       this.#hideScrollbars(element, copy, style);
       return copy;
     }
+    if (this.#reuse(element, copy)) return copy;
     const leaveOut = this.#options.leaveOut;
     const outerClip = this.#clip;
     const outerChange = this.#ancestorChange;
@@ -954,6 +1053,153 @@ class Snapshotter {
     this.#copyScroll(element, copy);
     this.#hideScrollbars(element, copy, style);
     return copy;
+  }
+
+  /**
+   * Copies what is in an element as an earlier snapshot did, if nothing in it
+   * changed since (see CachedContent): a mark in its copy, for the content
+   * serialized then. False where it has to be copied again.
+   */
+  #reuse(element: Element, copy: Element): boolean {
+    const leaveOut = this.#options.leaveOut;
+    if (!leaveOut || this.#inShadow || NOT_KEPT.has(element.tagName)) return false;
+    const content = leaveOut.contents.get(element);
+    if (!content || content.version !== leaveOut.version) return false;
+    const { changes } = leaveOut;
+    if (
+      Math.max(changes.within(element), changes.scrolledWithin(element), this.#ancestorChange) >
+      content.at
+    )
+      return false;
+    // Scrolled, or a scroll container: what is in it is moved (see copyScroll), its scrollbars drawn.
+    if (element.scrollTop !== 0 || element.scrollLeft !== 0) return false;
+    if (!this.#inReach(element, this.#clipFor(this.#styles.get(element)!))) return false;
+    if (this.#unsteadyIn(element)) return false;
+    const composition = this.#options.inlineComposition?.node ?? this.#options.composition?.field;
+    if (composition && element.contains(composition)) return false;
+    for (const { live, key } of content.images) {
+      const scratch = this.#inert.importNode(live, false) as Element;
+      this.#copyImage(live, scratch, this.#window.getComputedStyle(live));
+      if (imageKey(scratch) !== key) return false;
+    }
+    copy.appendChild(this.#contentMark(content.xhtml));
+    this.#images.push(...content.images);
+    this.#lines.set(element, content.lines);
+    this.#reusedElement = element;
+    // The elements with a z-index in it stack in it, and in its parents (see zOrdered).
+    if (content.zIndexed) {
+      this.#zIndexed = true;
+      for (
+        let box: Element | null = element;
+        box && !this.#zOrdered.has(box);
+        box = flatParent(box)
+      )
+        this.#zOrdered.add(box);
+    }
+    return true;
+  }
+
+  /** Whether an element has one in it with a value copied as computed (animated, or lost by the CSSOM), which changes by itself. */
+  #unsteadyIn(element: Element): boolean {
+    if (!this.#unsteadyAncestors) {
+      this.#unsteadyAncestors = new Set();
+      const unsteady = [...this.#animated.keys(), ...(this.#options.lost?.keys() ?? [])];
+      for (const live of unsteady)
+        for (
+          let box: Element | null = live;
+          box && !this.#unsteadyAncestors.has(box);
+          box = flatParent(box)
+        )
+          this.#unsteadyAncestors.add(box);
+    }
+    return this.#unsteadyAncestors.has(element);
+  }
+
+  /** A mark in the copy for serialized content: a comment (the page's are not copied) with its index in #contents. */
+  #contentMark(xhtml: string): Comment {
+    this.#contents.push(xhtml);
+    return this.#inert.createComment(`${CONTENT_MARK}${this.#contents.length - 1}`);
+  }
+
+  /**
+   * Keeps what is in the elements copied the same way while nothing in them
+   * changes (see CachedContent), each the outermost one: its children are
+   * serialized, and stand in the copy as a mark (see contentMark). Once the
+   * copy is complete, as nothing changes in it later.
+   */
+  keepContents(): void {
+    const leaveOut = this.#options.leaveOut;
+    if (!leaveOut) return;
+    const serializer = new XMLSerializer();
+    const kept = new Set<Element>();
+    // Parents first (each was noted after what is in it).
+    for (const [element, { copy, clip, content }] of [...this.#keep].reverse()) {
+      // In content kept whole.
+      const parent = flatParent(element);
+      if (parent && kept.has(parent)) {
+        kept.add(element);
+        continue;
+      }
+      // Something in it may be left out when the page scrolls (see LeaveOut): what is in it then, it is not kept.
+      if (!this.#inReach(element, clip)) continue;
+      kept.add(element);
+      // Each child alone says its namespace again: the parent's, said already.
+      const own = ` xmlns="${copy.namespaceURI}"`;
+      const xhtml = this.spliceContents(
+        Array.from(copy.childNodes, (node) => {
+          const text = serializer.serializeToString(node);
+          const name = node.nodeType === Node.ELEMENT_NODE ? (node as Element).localName : "";
+          return name && text.startsWith(`<${name}${own}`)
+            ? `<${name}${text.slice(name.length + 1 + own.length)}`
+            : text;
+        }).join(""),
+      );
+      leaveOut.contents.set(element, { ...content, xhtml });
+      copy.replaceChildren(this.#contentMark(xhtml));
+    }
+  }
+
+  /** Serialized copy with its marks (see contentMark) replaced by the content they stand for. */
+  spliceContents(xhtml: string): string {
+    if (this.#contents.length === 0) return xhtml;
+    return xhtml.replace(CONTENT_MARKS, (_, index: string) => this.#contents[Number(index)]!);
+  }
+
+  /** What shows of an element's parent's children (see clipOf): the viewport for an absolute or fixed one. */
+  #clipFor(style: CSSStyleDeclaration): Edges {
+    return style.position === "absolute" || style.position === "fixed"
+      ? this.#viewport()
+      : this.#clip;
+  }
+
+  /**
+   * Whether an element is near enough what shows (`clip`) that nothing in it
+   * is left out (see LeaveOut): its box, and what it holds that runs past it
+   * (downwards, and right), within LeaveOut.margin of it.
+   */
+  #inReach(element: Element, clip: Edges): boolean {
+    const { x, y } = this.#options.leaveOut!.margin;
+    const box = element.getBoundingClientRect();
+    return (
+      box.top >= clip.top - y &&
+      box.left >= clip.left - x &&
+      box.top + Math.max(box.height, element.scrollHeight) <= clip.bottom + y &&
+      box.left + Math.max(box.width, element.scrollWidth) <= clip.right + x
+    );
+  }
+
+  /**
+   * An element's computed style: as read when it was copied, or now, if it
+   * is in content kept (see CachedContent) rather than copied. Not for what
+   * is not copied (a <script>, the agent's own).
+   */
+  #styleOf(element: Element): CSSStyleDeclaration | undefined {
+    const style = this.#styles.get(element);
+    if (style || SKIPPED_ELEMENTS.has(element.tagName) || this.#options.ignored?.has(element))
+      return style;
+    const read = this.#window.getComputedStyle(element);
+    this.#styles.set(element, read);
+    return read;
   }
 
   /** The viewport, as edges. */
@@ -1089,6 +1335,7 @@ class Snapshotter {
     { width, height }: { width: number; height: number },
   ): void {
     const summary = this.#options.leaveOut!.summaries.get(element)!;
+    this.#unsteady++;
     this.#leftOutElement = element;
     // The elements with a z-index in it stack in it, and in its parents (see zOrdered).
     if (summary.zIndexed) {
@@ -1142,8 +1389,10 @@ class Snapshotter {
     style: CSSStyleDeclaration,
     copy: T,
   ): T {
-    if (inShadow && copy instanceof Element && isStyled(copy))
+    if (inShadow && copy instanceof Element && isStyled(copy)) {
+      this.#unsteady++;
       this.#copyShadowStyle(element, copy, style);
+    }
     return copy;
   }
 
@@ -1218,6 +1467,7 @@ class Snapshotter {
   #markTopLayer(element: Element, copy: Element): void {
     const states = topLayerStates(element);
     if (!states) return;
+    this.#unsteady++;
     const { popover, modal } = states;
     if (popover) copy.setAttribute(POPOVER_OPEN_ATTRIBUTE, "");
     if (modal) copy.setAttribute(MODAL_ATTRIBUTE, "");
@@ -1277,6 +1527,14 @@ class Snapshotter {
   #copyFormState(element: Element, copy: Element): void {
     const { HTMLInputElement, HTMLTextAreaElement, HTMLOptionElement, HTMLSelectElement } =
       this.#window;
+    // Its state (a value, checked, selected) changes with no attribute.
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLOptionElement ||
+      element instanceof HTMLSelectElement
+    )
+      this.#unsteady++;
     if (element instanceof HTMLInputElement) {
       if (element.type === "checkbox" || element.type === "radio") {
         copy.toggleAttribute("checked", element.checked);
@@ -1407,6 +1665,7 @@ class Snapshotter {
   }
 
   #composedSpan(text: string): Element {
+    this.#unsteady++;
     const span = this.#inert.createElement("span");
     span.setAttribute("style", "text-decoration: underline");
     span.textContent = text;
@@ -1467,6 +1726,7 @@ class Snapshotter {
   #copyAnimatedValues(element: Element, copy: Element): void {
     const values = this.#animated.get(element);
     if (!values?.size || !isStyled(copy)) return;
+    this.#unsteady++;
     const computed = this.#window.getComputedStyle(element);
     const declarations: string[] = [];
     for (const [property, value] of values) {
@@ -1496,6 +1756,7 @@ class Snapshotter {
   #copyLostPseudoValues(element: Element, copy: Element): void {
     const byPseudo = this.#options.lost?.get(element);
     if (!byPseudo) return;
+    this.#unsteady++;
     let mark: string | null = null;
     for (const [pseudo, properties] of byPseudo) {
       if (!pseudo) continue;
@@ -1521,6 +1782,8 @@ class Snapshotter {
    */
   #copyIndeterminateProgress(element: Element, copy: Element, style: CSSStyleDeclaration): void {
     if (!isIndeterminateProgress(this.#window, element, style) || !isStyled(copy)) return;
+    // Drawn where its bar is now.
+    this.#unsteady++;
     if (!this.#indeterminateRules) {
       this.generatedRules.push(...INDETERMINATE_RULES);
       this.#indeterminateRules = true;
@@ -1555,6 +1818,7 @@ class Snapshotter {
     }
     const { scrollLeft, scrollTop } = element;
     if (scrollLeft === 0 && scrollTop === 0) return;
+    this.#unsteady++;
     if (element instanceof this.#window.HTMLSelectElement) {
       this.#copyListBoxScroll(element, copy);
       return;
@@ -1713,7 +1977,7 @@ class Snapshotter {
         if (/\S/.test((node as Text).data)) return null;
         continue;
       }
-      const style = node.nodeType === Node.ELEMENT_NODE && this.#styles.get(node as Element);
+      const style = node.nodeType === Node.ELEMENT_NODE && this.#styleOf(node as Element);
       if (!style || style.display === "none") continue;
       if (style.position === "absolute" || style.position === "fixed") continue;
       if ((style.cssFloat || "none") !== "none") {
@@ -1737,7 +2001,7 @@ class Snapshotter {
 
   /** A length of a box (a margin, a padding) in px, as the copy has it (an animation's, baked) or the page. */
   #pxOf(box: Element, property: string): number {
-    const style = this.#styles.get(box)!;
+    const style = this.#styleOf(box)!;
     const copy = this.#copies.get(box);
     const value = copy && isStyled(copy) ? baseValue(copy, style, property) : "";
     return value.endsWith("px")
@@ -1754,7 +2018,7 @@ class Snapshotter {
   #marginToMoveFlow(first: Element, y: number): number | null {
     const margins: number[] = [];
     for (let box: Element | null = first; box;) {
-      const style: CSSStyleDeclaration = this.#styles.get(box)!;
+      const style: CSSStyleDeclaration = this.#styleOf(box)!;
       // An empty box: margins collapse through it, with those after it.
       if ((box as HTMLElement).offsetHeight === 0) return null;
       // Clearance separates a box's margin from those before it.
@@ -2074,6 +2338,7 @@ class Snapshotter {
   #hideScrollbars(element: Element, copy: Element, style: CSSStyleDeclaration): void {
     const bars = scrollbarsOf(element, style);
     if (bars.length === 0) return;
+    this.#unsteady++;
     this.scrollbars.push(...bars);
     // The document's scrollbars are the viewport's; the root copy never shows any.
     if (element === this.#document.scrollingElement || !(copy instanceof HTMLElement)) return;
@@ -2502,6 +2767,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   const snapshotter = new Snapshotter(document, options);
   const root = snapshotter.copy(document.documentElement) as HTMLElement;
   snapshotter.pinPositioned();
+  snapshotter.keepContents();
   if (snapshotter.topLayer.length > 0) snapshotter.generatedRules.push(...STAND_IN_RULES);
   if (snapshotter.generatedRules.length > 0) {
     const rules = root.ownerDocument.createElement("style");
@@ -2573,7 +2839,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   }
   // The agent's own <select> list goes over everything.
   if (options.selectPopup) drawSelectPopup(root, options.selectPopup);
-  return new XMLSerializer().serializeToString(root);
+  return snapshotter.spliceContents(new XMLSerializer().serializeToString(root));
 }
 
 /** Wraps the page's XHTML and CSS (its sheets, see DocumentCss) in an SVG document of the given size. */

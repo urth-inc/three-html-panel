@@ -1634,6 +1634,10 @@ describe("the top layer", () => {
 });
 
 describe("boxes far out of view", () => {
+  afterEach(() => {
+    delete (document.body as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+  });
+
   function leaveOut(extra: Partial<LeaveOut> = {}): LeaveOut {
     return {
       version: "1",
@@ -1642,6 +1646,7 @@ describe("boxes far out of view", () => {
       relational: null,
       anchors: false,
       margin: { x: 256, y: 192 },
+      contents: new WeakMap(),
       ...extra,
     };
   }
@@ -1652,6 +1657,10 @@ describe("boxes far out of view", () => {
   }
 
   function snapshot(options: LeaveOut): Document {
+    // The page is long: <body> (and what has no box of its own here) runs far down.
+    for (const element of document.body.querySelectorAll<HTMLElement>("body, section, .card"))
+      element.getBoundingClientRect = () => new DOMRect(0, 0, 1024, 6000);
+    document.body.getBoundingClientRect = () => new DOMRect(0, 0, 1024, 6000);
     const xhtml = snapshotDocument(document, { inlineImage: () => null, leaveOut: options });
     return new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
   }
@@ -1734,5 +1743,69 @@ describe("boxes far out of view", () => {
     const elsewhere = leaveOut({ relational: [{ anchor: ".list", check: ".icon" }] });
     snapshot(elsewhere);
     expect(snapshot(elsewhere).querySelector("#far i")).toBeNull();
+  });
+});
+
+describe("content kept from one snapshot to the next", () => {
+  afterEach(() => {
+    delete (document.body as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+  });
+
+  function setup(html: string) {
+    document.body.innerHTML = html;
+    // The page is long: <body> runs far down; #box is in view.
+    document.body.getBoundingClientRect = () => new DOMRect(0, 0, 1024, 6000);
+    document.getElementById("box")!.getBoundingClientRect = () => new DOMRect(0, 100, 300, 100);
+    const options: LeaveOut = {
+      version: "1",
+      changes: new PageChanges(),
+      summaries: new WeakMap(),
+      relational: null,
+      anchors: false,
+      margin: { x: 256, y: 192 },
+      contents: new WeakMap(),
+    };
+    let image: string | null = null;
+    const snapshot = () =>
+      snapshotDocument(document, { inlineImage: () => image, leaveOut: options });
+    return { options, snapshot, setImage: (url: string) => (image = url) };
+  }
+
+  it("copies what is in an element as before while nothing in it changes, nor scrolls", () => {
+    const { options, snapshot } = setup(`<div id="box"><p id="text">Before</p></div>`);
+    const first = snapshot();
+    expect(options.contents.get(document.getElementById("box")!)).toBeDefined();
+    const text = document.getElementById("text")!;
+    // Changed without the page's observer seeing it: what was kept shows.
+    text.textContent = "After";
+    expect(snapshot()).toBe(first);
+    options.changes.changed(text.firstChild!);
+    expect(snapshot()).toContain("After");
+    text.textContent = "Again";
+    options.changes.scrolled(text);
+    expect(snapshot()).toContain("Again");
+  });
+
+  it("keeps nothing with a form control in it, whose state changes with no attribute", () => {
+    const { options, snapshot } = setup(`<div id="box"><p><input value="a" /></p></div>`);
+    snapshot();
+    expect(options.contents.get(document.getElementById("box")!)).toBeUndefined();
+  });
+
+  it("copies it again once one of its images arrived", () => {
+    const { snapshot, setImage } = setup(
+      `<div id="box"><img src="https://site.test/a.png" /></div>`,
+    );
+    expect(snapshot()).not.toContain("data:image/png");
+    setImage("data:image/png;base64,AAAA");
+    expect(snapshot()).toContain("data:image/png;base64,AAAA");
+  });
+
+  it("serializes it as the whole copy does", () => {
+    const html = `<div id="box"><p class="a">One <b>two</b></p><svg viewBox="0 0 1 1"><path d="M0 0"/></svg></div>`;
+    const { snapshot } = setup(html);
+    const kept = snapshot();
+    const whole = snapshotDocument(document, { inlineImage: () => null });
+    expect(kept).toBe(whole);
   });
 });
