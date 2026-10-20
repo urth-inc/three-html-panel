@@ -8,7 +8,7 @@
 // Only the topics below are read: the function is not an open proxy to Zenn.
 
 /** The page's tabs: a Zenn topic, or "" for all of Zenn. */
-export const TOPICS = ["", "threejs", "webxr", "webgl", "vr", "metaverse"] as const;
+export const TOPICS = ["", "threejs", "webxr", "webgl", "svg", "vr", "metaverse"] as const;
 export type Topic = (typeof TOPICS)[number];
 
 export const isTopic = (value: unknown): value is Topic => TOPICS.includes(value as Topic);

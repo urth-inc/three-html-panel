@@ -23,6 +23,7 @@ const TABS: { topic: Topic; name: string }[] = [
   { topic: "threejs", name: "three.js" },
   { topic: "webxr", name: "WebXR" },
   { topic: "webgl", name: "WebGL" },
+  { topic: "svg", name: "SVG" },
   { topic: "vr", name: "VR" },
   { topic: "metaverse", name: "メタバース" },
 ];
