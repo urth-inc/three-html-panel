@@ -1,0 +1,20 @@
+{
+  "name": "example-timetable",
+  "private": true,
+  "description": "An example site: an event timetable that follows the clock, with no framework",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@urth/three-html-panel": "0.3.0"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

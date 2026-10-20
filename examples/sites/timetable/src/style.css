@@ -1,0 +1,384 @@
+/* Few rules, system fonts and no transitions: in a panel, every frame copies
+   the page's CSS, and transitions would jump to their end (see tween.ts).
+
+   No var() in shorthands (background, border, border-color, ...): the CSSOM
+   loses such values, and the panel's copy then writes the computed values into
+   every element's style. Longhands (background-color, outline-color) keep them. */
+
+:root {
+  --bg: #0f141d;
+  --panel: #151b27;
+  --raised: #1b2231;
+  --line: #273041;
+  --text: #e9edf5;
+  --muted: #8d97aa;
+  --now: #ff5d73;
+  color-scheme: dark;
+  /* Here, not after body's font: a longhand after the shorthand makes the
+     CSSOM write the shorthand out as all of its longhands. */
+  font-variant-numeric: tabular-nums;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.45 system-ui,
+    "Hiragino Sans",
+    "Noto Sans JP",
+    sans-serif;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+}
+
+/* ---- Header ---- */
+
+.top {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  column-gap: 20px;
+  padding: 14px 20px 12px;
+}
+
+.top h1 {
+  grid-column: 1;
+  overflow: hidden;
+  font-size: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The dot blinks while a session is on (data-on, set by main.ts). */
+.top h1::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 10px;
+  border-radius: 50%;
+  background-color: var(--now);
+  opacity: 0.3;
+}
+
+.top h1[data-on]::before {
+  opacity: 1;
+  box-shadow: 0 0 10px var(--now);
+}
+
+.top p {
+  grid-area: 2 / 1;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.clock {
+  grid-area: 1 / 2 / 3;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.speed {
+  grid-area: 1 / 3 / 3;
+  padding: 6px 14px;
+  border: 1px solid #273041;
+  border-radius: 999px;
+  background-color: var(--raised);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.speed:hover {
+  border-color: #3c475c;
+  color: var(--text);
+}
+
+.speed[data-on] {
+  border-color: #e9edf5;
+  background-color: var(--text);
+  color: #111722;
+  font-weight: 600;
+}
+
+/* ---- Timeline ---- */
+
+.body {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  min-height: 0;
+  border-top: 1px solid #273041;
+}
+
+.scroller {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.track {
+  position: relative;
+  display: grid;
+  grid-template-rows: 30px;
+  grid-auto-rows: 1fr;
+  height: 100%;
+  /* An hour line every --hour, from the first whole hour (set by main.ts). */
+  background-image: linear-gradient(to right, rgb(255 255 255 / 0.07) 1px, transparent 1px);
+  background-size: var(--hour) 100%;
+  background-position-x: var(--hour-offset);
+}
+
+.ruler {
+  position: relative;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ruler span {
+  position: absolute;
+  top: 7px;
+  padding-left: 5px;
+}
+
+/* The stages' names (and the corner over them) stay at the left. */
+.corner,
+.stage-label {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 116px;
+  height: 100%;
+  background-color: var(--panel);
+}
+
+.row {
+  position: relative;
+  border-top: 1px solid #273041;
+}
+
+.stage-label {
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 14px;
+  box-shadow: inset 4px 0 var(--c);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* A session: its title, its times before it (data-time), and how far it has
+   gone (--p) as the width of a second background. The stage's colour is an
+   outline: border-color is a shorthand. */
+.session {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  /* A flex column: a button would centre its content vertically. */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  outline: 1px solid;
+  outline-offset: -1px;
+  outline-color: color-mix(in srgb, var(--c) 45%, transparent);
+  background-color: color-mix(in srgb, var(--c) 16%, var(--panel));
+  --fill: color-mix(in srgb, var(--c) 32%, transparent);
+  background-image: linear-gradient(var(--fill), var(--fill));
+  background-size: var(--p, 0%) 100%;
+  background-repeat: no-repeat;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.session::before {
+  content: attr(data-time);
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.session:hover {
+  outline-color: var(--c);
+}
+
+.session[data-state="live"] {
+  outline-color: var(--c);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--c) 45%, transparent);
+}
+
+.session[data-state="live"]::before {
+  content: "● LIVE  " attr(data-time);
+  color: var(--now);
+  font-weight: 700;
+}
+
+.session[data-state="ended"] {
+  outline-color: #273041;
+  background-color: var(--raised);
+  color: #7d8799;
+}
+
+.session[data-selected] {
+  outline: 2px solid #e9edf5;
+  outline-offset: 1px;
+}
+
+/* Now: a line, with the time on it (data-time). */
+.now-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 2px;
+  margin-left: -1px;
+  background-color: var(--now);
+  box-shadow: 0 0 8px var(--now);
+  pointer-events: none;
+}
+
+.now-line::before {
+  content: attr(data-time);
+  position: absolute;
+  top: 5px;
+  left: 1px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background-color: var(--now);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+/* ---- Now and next ---- */
+
+.side {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  border-left: 1px solid #273041;
+  background-color: var(--panel);
+}
+
+.side h2 {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cards {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* A card: its title between its stage (data-meta) and its status (data-when),
+   with how far it has gone (--p) as a bar at the bottom. Tinted with its
+   stage's colour all over, as the sessions on the timeline are. */
+.card {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  outline: 1px solid;
+  outline-offset: -1px;
+  outline-color: color-mix(in srgb, var(--c) 35%, transparent);
+  background-color: color-mix(in srgb, var(--c) 12%, var(--raised));
+  background-image: linear-gradient(var(--c), var(--c));
+  background-size: var(--p, 0%) 3px;
+  background-position-y: bottom;
+  background-repeat: no-repeat;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.card::before,
+.card::after {
+  content: attr(data-meta);
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.card::before {
+  margin-bottom: 2px;
+  color: color-mix(in srgb, var(--c) 70%, var(--text));
+  font-weight: 600;
+}
+
+.card::after {
+  content: attr(data-when);
+  margin-top: 4px;
+}
+
+.card:hover {
+  outline-color: var(--c);
+}
+
+.empty {
+  padding: 10px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Small panels (about 640 px wide): the timeline alone. */
+@media (max-width: 760px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+
+  .side,
+  .top p {
+    display: none;
+  }
+
+  .top {
+    column-gap: 12px;
+    padding: 10px 14px;
+  }
+
+  .clock {
+    font-size: 24px;
+  }
+}
