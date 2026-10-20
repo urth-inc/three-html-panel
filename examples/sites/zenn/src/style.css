@@ -105,16 +105,16 @@ p {
   margin: 0 20px;
 }
 
-/* An article: its title on one line, its emoji (data-emoji) and its details
-   (data-details) as pseudo-elements, out of the flow so that the title alone
-   is the line the ellipsis cuts. */
+/* An article: its title on one line, its author (data-author) as a
+   pseudo-element out of the flow, so that the title alone is the line the
+   ellipsis cuts. */
 .rows > a {
   position: relative;
   display: block;
   height: 60px;
   margin-bottom: 8px;
   overflow: hidden;
-  padding: 10px 14px 0 70px;
+  padding: 10px 14px 0;
   border-radius: 12px;
   background-color: #fff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
@@ -125,26 +125,12 @@ p {
   white-space: nowrap;
 }
 
-.rows > a::before {
-  content: attr(data-emoji);
-  position: absolute;
-  top: 8px;
-  left: 10px;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background-color: #e8f4ff;
-  font-size: 24px;
-  line-height: 44px;
-  text-align: center;
-}
-
 .rows > a::after {
-  content: attr(data-details);
+  content: attr(data-author);
   position: absolute;
   right: 14px;
   bottom: 9px;
-  left: 70px;
+  left: 14px;
   overflow: hidden;
   color: #6b7280;
   font-size: 12px;

@@ -3,13 +3,14 @@ import "./style.css";
 import type { Article, Articles, Topic } from "../server/articles";
 import { tween } from "./tween";
 
-// Zenn's trending articles, a tab per topic, read from /api/articles (a Pages
-// Function: Zenn sends no CORS headers, see server/articles.ts).
+// Zenn's trending articles, and a tab per topic with its newest, from Zenn's
+// RSS feeds, read through /api/articles (a Pages Function: the feeds send no
+// CORS headers, see server/articles.ts).
 //
 // Made to be cheap to show in a panel, where every change is a copy of the
 // whole page: no framework, system fonts, no images. An article is one link:
-// its emoji and its line of details are pseudo-elements showing its
-// attributes (attr()), and it has no style of its own. The list is virtual:
+// its author is a pseudo-element showing an attribute (attr()), and it has no
+// style of its own. The list is virtual:
 // only the rows shown are in the page, in the flow, after a padding as tall as
 // the rows above them. Things move only by script (see tween.ts), when a tab
 // is chosen.
@@ -19,7 +20,7 @@ const ROW_HEIGHT = 68;
 const REFRESH = 10 * 60_000;
 
 const TABS: { topic: Topic; name: string }[] = [
-  { topic: "", name: "すべて" },
+  { topic: "", name: "トレンド" },
   { topic: "threejs", name: "three.js" },
   { topic: "webxr", name: "WebXR" },
   { topic: "webgl", name: "WebGL" },
@@ -55,10 +56,7 @@ function row(index: number): HTMLAnchorElement {
   element = document.createElement("a");
   element.href = article.url;
   element.textContent = article.title;
-  element.dataset.emoji = article.emoji;
-  element.dataset.details = [article.author.trim(), `♥ ${article.likes}`]
-    .filter(Boolean)
-    .join(" · ");
+  element.dataset.author = article.author.trim();
   made.set(index, element);
   return element;
 }

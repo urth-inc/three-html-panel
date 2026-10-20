@@ -13,9 +13,9 @@ export interface Site {
 /** The sites, in the order the switcher lists them; the first is shown first. */
 const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
   zenn: {
-    title: "Zenn Trends",
+    title: "Zenn",
     stack: "HTML · CSS · TS · Pages Functions",
-    description: "Trending articles on Zenn, read through a Pages Function.",
+    description: "Zenn's RSS feeds, trending and by topic, read through a Pages Function.",
   },
   timetable: {
     title: "Timetable",
