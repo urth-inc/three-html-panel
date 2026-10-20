@@ -61,13 +61,22 @@ requestAnimationFrame(draw);
 setInterval(() => draw(performance.now()), 1000 / 30);
 video.srcObject = canvas.captureStream(30);
 
+// The video plays only from the button. WebKit on Linux (in CI) may start a
+// video fed a stream by itself, with no autoplay: such a start is paused at
+// once, so that the button finds the video as it shows it.
+let asked = false;
 play.addEventListener("click", () => {
   if (video.paused) {
+    asked = true;
     start = performance.now();
     void video.play();
   } else {
+    asked = false;
     video.pause();
   }
 });
-video.addEventListener("play", () => (play.textContent = "Pause"));
+video.addEventListener("play", () => {
+  if (!asked) video.pause();
+  else play.textContent = "Pause";
+});
 video.addEventListener("pause", () => (play.textContent = "Play"));
