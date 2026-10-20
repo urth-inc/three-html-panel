@@ -311,15 +311,18 @@ p {
 }
 
 /* A card: its title between its stage (data-meta) and its status (data-when),
-   with how far it has gone (--p) as a bar at the bottom. */
+   with how far it has gone (--p) as a bar at the bottom. Tinted with its
+   stage's colour all over, as the sessions on the timeline are. */
 .card {
   display: block;
   width: 100%;
   padding: 10px 12px;
   border: 0;
   border-radius: 10px;
-  box-shadow: inset 4px 0 var(--c);
-  background-color: var(--raised);
+  outline: 1px solid;
+  outline-offset: -1px;
+  outline-color: color-mix(in srgb, var(--c) 35%, transparent);
+  background-color: color-mix(in srgb, var(--c) 12%, var(--raised));
   background-image: linear-gradient(var(--c), var(--c));
   background-size: var(--p, 0%) 3px;
   background-position-y: bottom;
@@ -340,6 +343,8 @@ p {
 
 .card::before {
   margin-bottom: 2px;
+  color: color-mix(in srgb, var(--c) 70%, var(--text));
+  font-weight: 600;
 }
 
 .card::after {
@@ -348,7 +353,7 @@ p {
 }
 
 .card:hover {
-  background-color: #232b3c;
+  outline-color: var(--c);
 }
 
 .empty {
