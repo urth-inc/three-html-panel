@@ -21,6 +21,7 @@ export const SITE_PORTS = {
   gallery: 5178,
   // 5179 is the live demo's.
   timetable: 5180,
+  zenn: 5181,
 } as const;
 
 export type SiteName = keyof typeof SITE_PORTS;

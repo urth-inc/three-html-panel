@@ -36,6 +36,11 @@ const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
     stack: "HTML · CSS · TS",
     description: "An event timetable that follows the clock, from a JSON file.",
   },
+  zenn: {
+    title: "Zenn Trends",
+    stack: "HTML · CSS · TS · Pages Functions",
+    description: "Trending articles on Zenn, read through a Pages Function.",
+  },
 };
 
 export const SITES: readonly Site[] = Object.entries(import.meta.env.VITE_SITES).flatMap(
