@@ -10,7 +10,18 @@ export interface Site {
   url: URL;
 }
 
+/** The sites, in the order the switcher lists them; the first is shown first. */
 const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
+  zenn: {
+    title: "Zenn RSS Reader",
+    stack: "HTML · CSS · TS · Pages Functions",
+    description: "Zenn's RSS feeds, trending and by topic, read through a Pages Function.",
+  },
+  timetable: {
+    title: "Timetable",
+    stack: "HTML · CSS · TS",
+    description: "An event timetable that follows the clock, from a JSON file.",
+  },
   "web-standards": {
     title: "Web Platform Field Guide",
     stack: "HTML · CSS · JS",
@@ -31,19 +42,13 @@ const ABOUT: Record<string, Omit<Site, "name" | "url">> = {
     stack: "Svelte",
     description: "A photo gallery and editor: filters, sliders, drag and drop.",
   },
-  timetable: {
-    title: "Timetable",
-    stack: "HTML · CSS · TS",
-    description: "An event timetable that follows the clock, from a JSON file.",
-  },
 };
 
-export const SITES: readonly Site[] = Object.entries(import.meta.env.VITE_SITES).flatMap(
-  ([name, origin]) => {
-    const about = ABOUT[name];
-    return about ? [{ name, ...about, url: new URL("/", origin) }] : [];
-  },
-);
+// In ABOUT's order: the build lists the sites in the order of their ports.
+export const SITES: readonly Site[] = Object.entries(ABOUT).flatMap(([name, about]) => {
+  const origin = import.meta.env.VITE_SITES[name];
+  return origin ? [{ name, ...about, url: new URL("/", origin) }] : [];
+});
 
 export const siteNamed = (name: unknown): Site | undefined =>
   SITES.find((site) => site.name === name);

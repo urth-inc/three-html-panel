@@ -1,0 +1,134 @@
+/* Few rules, system fonts and no transitions: in a panel, every frame copies
+   the page's CSS, and transitions would jump to their end (see tween.ts).
+   No var() in shorthands (background, border, ...): the panel's copy would
+   write their computed values into every element's style. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: #f1f5f9;
+  color: #1f2937;
+  font:
+    15px/1.4 system-ui,
+    "Hiragino Sans",
+    "Noto Sans JP",
+    sans-serif;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+h1 {
+  margin: 0;
+  padding: 16px 20px 10px;
+  font-size: 22px;
+}
+
+/* ---- Tabs ---- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px 12px;
+}
+
+.tabs button {
+  /* Narrow, a tab goes to the next line rather than its name breaking. */
+  flex: none;
+  white-space: nowrap;
+  padding: 6px 14px;
+  border: 1px solid #d5dde6;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #4b5563;
+  /* Not `font: inherit`: with font-size after it, the copy would write
+     the shorthand out as all of its longhands. */
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  border-color: #3ea8ff;
+  color: #1f2937;
+}
+
+.tabs button[data-on] {
+  border-color: #3ea8ff;
+  background-color: #3ea8ff;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---- Articles: a virtual list (see main.ts) ---- */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rows {
+  margin: 0 20px;
+}
+
+/* An article: its title on one line, its author (data-author) as a
+   pseudo-element out of the flow, so that the title alone is the line the
+   ellipsis cuts. */
+.rows > a {
+  position: relative;
+  display: block;
+  height: 60px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  padding: 10px 14px 0;
+  border-radius: 12px;
+  background-color: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rows > a::after {
+  content: attr(data-author);
+  position: absolute;
+  right: 14px;
+  bottom: 9px;
+  left: 14px;
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+
+.rows > a:hover {
+  outline: 2px solid #3ea8ff;
+  outline-offset: -2px;
+}
+
+footer {
+  padding: 8px 20px 12px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+footer a {
+  color: inherit;
+}
