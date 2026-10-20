@@ -30,6 +30,7 @@ import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
 import type { SelectionBox } from "../input/selection";
 import { topLayerStates } from "../input/top-layer";
+import type { PageChanges } from "./page-changes";
 import {
   MODAL_ATTRIBUTE,
   POPOVER_OPEN_ATTRIBUTE,
@@ -37,6 +38,7 @@ import {
   liveSelector,
   splitSelectorList,
   type LostDeclarations,
+  type RelationalCheck,
 } from "./css";
 
 /** A transparent 1x1 GIF: what an image far out of view is in the copy (see farFromView). */
@@ -49,6 +51,35 @@ function pinSize(copy: HTMLElement, style: CSSStyleDeclaration): void {
     const value = style.getPropertyValue(property);
     if (value.endsWith("px")) copy.style.setProperty(property, value, "important");
   }
+}
+
+/** Elements never copied empty (see LeaveOut): form controls, which draw what is in them their own way. */
+const KEPT_WHOLE = new Set([
+  "HTML",
+  "HEAD",
+  "BODY",
+  "SELECT",
+  "DATALIST",
+  "OPTGROUP",
+  "OPTION",
+  "TEXTAREA",
+  "BUTTON",
+  "FIELDSET",
+  "LEGEND",
+  "SLOT",
+]);
+
+/** The display of a box laid out as a block (an inline-flex flex item's is flex already). */
+const BLOCK_LEVEL_BOX = /^(block|flow-root|list-item|flex|grid)$/;
+
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+/** A box's edges, in CSS px from the viewport's top left. */
+interface Edges {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
@@ -109,6 +140,75 @@ export interface SnapshotOptions {
   shadowRoot?: (root: ShadowRoot) => void;
   /** The styles copyShadowStyle computed, to use again in later snapshots while their version stays. */
   shadowStyles?: ShadowStyles;
+  /** The properties CSS animations animate, to use again in later snapshots while their version stays. */
+  animatedProperties?: AnimatedProperties;
+  /** Leave out what is in boxes far from what shows (see LeaveOut); everything is copied without it. */
+  leaveOut?: LeaveOut;
+}
+
+/**
+ * Leaving out what is in boxes far out of view: such a box is copied empty,
+ * at its size, which keeps the page's layout around it as it is. Most of a
+ * long page is out of view, and copying every element of it, then drawing
+ * the image, takes most of the time a frame takes.
+ *
+ * Only a box whose contents cannot show outside it, nor change anything else
+ * on the page, is left empty: one that lays out its contents on its own (a
+ * new block formatting context, so their margins and floats stay in it) and
+ * that has nothing in it placed from outside it (an absolute or fixed element
+ * whose containing block is outside it), in the top layer, in a shadow tree,
+ * or that the page's CSS can point to (an SVG element with an id). What is in
+ * a box is known from the last snapshot that copied it all (see
+ * SubtreeSummary), as long as nothing in it or around it changed since
+ * (PageChanges).
+ */
+export interface LeaveOut {
+  /** Changes when what a summary says may have changed anywhere (the page's stylesheets, the viewport's size). */
+  version: string;
+  readonly changes: PageChanges;
+  readonly summaries: WeakMap<Element, SubtreeSummary>;
+  /**
+   * What the :has() in the page's CSS are about (see DocumentCss.relationalCheck):
+   * a box with an element in it that one may match, in one of its anchors
+   * (the box or a parent), is copied whole, as the rules with that :has()
+   * would not match the copy as they do the page.
+   */
+  relational: readonly RelationalCheck[] | null;
+  /** Whether the page's CSS anchors boxes to others (anchor-name): a box with an anchor in it is copied whole. */
+  anchors: boolean;
+  /** How far out of view a box must be (CSS px, across and down): what is in it may show past it by less. */
+  margin: { x: number; y: number };
+}
+
+/** What a snapshot found in an element's subtree, when it copied it all (see LeaveOut). */
+export interface SubtreeSummary {
+  /** LeaveOut.version then. */
+  version: string;
+  /** PageChanges.count then. */
+  at: number;
+  /** Nothing in it shows outside it, nor is placed from outside it. */
+  contained: boolean;
+  /** Something in it has a z-index (see zOrdered). */
+  zIndexed: boolean;
+  /**
+   * What is in it is lines (text, and inline boxes with lines in them, or
+   * laid out on their own): no block whose margins could go through it, and
+   * nothing that floats out of it (a float is a block).
+   */
+  lines: boolean;
+}
+
+/**
+ * The properties each CSS animation's keyframes set (see collectAnimatedValues),
+ * kept from one snapshot to the next: reading keyframes is slow, and a page
+ * may have many animations (a spinner in each row of a list). They come from
+ * the page's @keyframes rules: whoever snapshots changes `version` when the
+ * page's stylesheets may have changed. Animations made by script are read
+ * every time (their keyframes can be set at any time).
+ */
+export interface AnimatedProperties {
+  version: string;
+  readonly properties: WeakMap<KeyframeEffect, { version: string; properties: string[] }>;
 }
 
 /**
@@ -232,7 +332,10 @@ export function isSampledLive(animation: Animation): boolean {
  * - animations that repeat forever, and paused ones, are copied as they are now
  * Pseudo-element animations cannot go into an inline style and are left out.
  */
-function collectAnimatedValues(document: Document): Map<Element, Map<string, string | null>> {
+function collectAnimatedValues(
+  document: Document,
+  cache?: AnimatedProperties,
+): Map<Element, Map<string, string | null>> {
   const result = new Map<Element, Map<string, string | null>>();
   for (const animation of document.getAnimations()) {
     const effect = animation.effect as KeyframeEffect | null;
@@ -240,20 +343,17 @@ function collectAnimatedValues(document: Document): Map<Element, Map<string, str
     if (isTransition(animation)) continue;
     let values = result.get(effect.target);
     if (!values) result.set(effect.target, (values = new Map()));
-    const keyframes = effect.getKeyframes();
 
     if (isSampledLive(animation)) {
-      for (const keyframe of keyframes) {
-        for (const key of Object.keys(keyframe))
-          if (!KEYFRAME_META_KEYS.has(key)) values.set(toKebabCase(key), null);
-      }
+      for (const property of animatedProperties(animation, effect, cache))
+        values.set(property, null);
       continue;
     }
     const timing = effect.getTiming();
     if (timing.fill !== "forwards" && timing.fill !== "both") continue;
     // A property missing from the end keyframe ends on the element's own style.
     const endOffset = endOffsetOf(timing);
-    for (const keyframe of keyframes) {
+    for (const keyframe of effect.getKeyframes()) {
       if (keyframe.computedOffset !== endOffset) continue;
       for (const [key, value] of Object.entries(keyframe)) {
         if (!KEYFRAME_META_KEYS.has(key) && typeof value === "string")
@@ -262,6 +362,26 @@ function collectAnimatedValues(document: Document): Map<Element, Map<string, str
     }
   }
   return result;
+}
+
+/** The properties (kebab-case) an animation's keyframes set: a CSS animation's read once while `cache` holds. */
+function animatedProperties(
+  animation: Animation,
+  effect: KeyframeEffect,
+  cache?: AnimatedProperties,
+): string[] {
+  // A CSS animation's keyframes are its @keyframes rule's (checked by shape: the page is another realm in tests).
+  const cached = cache && "animationName" in animation ? cache.properties.get(effect) : undefined;
+  if (cached && cached.version === cache!.version) return cached.properties;
+  const properties = new Set<string>();
+  for (const keyframe of effect.getKeyframes()) {
+    for (const key of Object.keys(keyframe))
+      if (!KEYFRAME_META_KEYS.has(key)) properties.add(toKebabCase(key));
+  }
+  const list = [...properties];
+  if (cache && "animationName" in animation)
+    cache.properties.set(effect, { version: cache.version, properties: list });
+  return list;
 }
 
 /**
@@ -632,11 +752,12 @@ class Snapshotter {
    */
   readonly #moved = new Map<Element, "relative" | "translated">();
   /**
-   * The page's containing blocks of absolute and fixed elements where the copy
-   * is now; null for the initial containing block (absolute) or the viewport (fixed).
+   * Which of the elements copied are the containing blocks of the fixed
+   * elements in them (and so of the absolute ones), or only of the absolute
+   * ones: found for the parents of positioned elements alone, as needed (see
+   * containerOf), not read for every element.
    */
-  #absoluteContainer: Element | null = null;
-  #fixedContainer: Element | null = null;
+  readonly #contains = new Map<Element, "fixed" | "absolute" | null>();
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
   /** Whether INDETERMINATE_RULES are among generatedRules. */
@@ -653,6 +774,31 @@ class Snapshotter {
   #animating: Set<Element> | null = null;
   /** Open popovers and modal dialogs, in the order copied: the page's top layer (see liftToTopLayer). */
   readonly topLayer: { live: Element; copy: HTMLElement }[] = [];
+  /** The element copy() copied empty last. */
+  #leftOutElement: Element | null = null;
+  /**
+   * While copying an element (see LeaveOut): how deep it is in the page; the
+   * depth of each element copied so far.
+   */
+  #depth = 0;
+  readonly #depthOf = new Map<Element, number>();
+  /**
+   * The shallowest element outside the subtree being copied that what is in
+   * it depends on, as a depth: the containing block of an absolute or fixed
+   * element in it; -1 for what shows or is pointed to from anywhere. What the
+   * element itself depends on goes in #ownReach. Infinity for none.
+   */
+  #reach = Infinity;
+  #ownReach = Infinity;
+  /** Whether something in the subtree being copied has a z-index; the element itself, in #ownZIndexed. */
+  #zIndexed = false;
+  #ownZIndexed = false;
+  /** Whether each element copied holds only lines (see SubtreeSummary.lines). */
+  readonly #lines = new Map<Element, boolean>();
+  /** The last change (PageChanges) to any of the parents of the element being copied. */
+  #ancestorChange = 0;
+  /** What shows of the children of the element being copied: the viewport, cut by their scroll containers. */
+  #clip: Edges;
 
   readonly #document: Document;
   readonly #options: SnapshotOptions;
@@ -661,7 +807,9 @@ class Snapshotter {
     this.#document = document;
     this.#options = options;
     this.#window = document.defaultView as FrameWindow;
-    this.#animated = collectAnimatedValues(document);
+    this.#clip = this.#viewport();
+    this.#changesAt = options.leaveOut?.changes.count ?? 0;
+    this.#animated = collectAnimatedValues(document, options.animatedProperties);
     for (const [element, byPseudo] of options.lost ?? []) {
       const properties = byPseudo.get("");
       if (!properties) continue;
@@ -681,12 +829,70 @@ class Snapshotter {
     if (live.nodeType !== Node.ELEMENT_NODE) return null;
     const element = live as Element;
     if (SKIPPED_ELEMENTS.has(element.tagName) || this.#options.ignored?.has(element)) return null;
+    const leaveOut = this.#options.leaveOut;
+    if (!leaveOut) return this.#copyElement(element);
+    // What its subtree depends on outside it (see reach), as the copies of its children found.
+    const outer = [this.#reach, this.#ownReach, this.#zIndexed, this.#ownZIndexed] as const;
+    this.#reach = this.#ownReach = Infinity;
+    this.#zIndexed = this.#ownZIndexed = false;
+    const depth = this.#depth++;
+    this.#depthOf.set(element, depth);
+    // The page's CSS can point to it (a gradient, a clip path, a symbol for <use>).
+    if (element.namespaceURI === SVG_NAMESPACE && element.id) this.#ownReach = -1;
+    const copy = this.#copyElement(element);
+    this.#depth--;
+    if (this.#leftOutElement !== element && !this.#inShadow && element.firstChild) {
+      leaveOut.summaries.set(element, {
+        version: leaveOut.version,
+        at: this.#changesAt,
+        contained: this.#reach >= depth,
+        zIndexed: this.#zIndexed,
+        lines: this.#lines.get(element) ?? false,
+      });
+    }
+    const style = this.#styles.get(element);
+    // Boxes placed from it (position-anchor) may be anywhere.
+    const anchorName = leaveOut.anchors && style?.getPropertyValue("anchor-name");
+    if (anchorName && anchorName !== "none") this.#ownReach = -1;
+    this.#reach = Math.min(outer[0], this.#reach, this.#ownReach);
+    this.#zIndexed = outer[2] || this.#zIndexed || this.#ownZIndexed;
+    this.#ownReach = outer[1];
+    this.#ownZIndexed = outer[3];
+    return copy;
+  }
+
+  /** Whether children copied are lines (see SubtreeSummary.lines). */
+  #holdLines(children: readonly Node[]): boolean {
+    for (const child of children) {
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      const style = this.#styles.get(child as Element);
+      // Not copied (a <script>), or out of the flow.
+      if (!style || style.display === "none") continue;
+      if (style.position === "absolute" || style.position === "fixed") continue;
+      // An inline box: as what is in it. An inline block lays out what is in it on its own.
+      if (
+        style.display === "inline"
+          ? !this.#lines.get(child as Element)
+          : !style.display.startsWith("inline-")
+      )
+        return false;
+    }
+    return true;
+  }
+
+  /** PageChanges.count when this snapshot began. */
+  readonly #changesAt: number;
+
+  #copyElement(element: Element): Node | null {
     const style = this.#window.getComputedStyle(element);
     this.#styles.set(element, style);
     // A host and everything drawn in it.
     const shadowRoot = shadowRootOf(element);
     const inShadow = this.#inShadow || shadowRoot !== null;
-    if (shadowRoot) this.#foundShadowRoot(shadowRoot);
+    if (shadowRoot) {
+      this.#foundShadowRoot(shadowRoot);
+      this.#ownReach = -1;
+    }
 
     if (element instanceof this.#window.HTMLCanvasElement)
       return this.#remember(
@@ -716,9 +922,19 @@ class Snapshotter {
     // <head> carries no visible content, but keep the element so the structure stays valid.
     if (element.tagName === "HEAD") return copy;
 
-    const outer = [this.#absoluteContainer, this.#fixedContainer] as const;
-    if (containsFixed(style)) this.#absoluteContainer = this.#fixedContainer = element;
-    else if (containsAbsolute(style)) this.#absoluteContainer = element;
+    const leftOut = this.#leavesOut(element, style);
+    if (leftOut) {
+      this.#leaveOut(element, copy, leftOut);
+      this.#hideScrollbars(element, copy, style);
+      return copy;
+    }
+    const leaveOut = this.#options.leaveOut;
+    const outerClip = this.#clip;
+    const outerChange = this.#ancestorChange;
+    if (leaveOut && element.firstElementChild) {
+      this.#clip = this.#clipOf(element, style);
+      this.#ancestorChange = Math.max(outerChange, leaveOut.changes.own(element));
+    }
     const children = element.tagName === "TEXTAREA" ? [] : flatChildren(element);
     // Composed text between two children (an empty line of an editable, say).
     const composition = this.#options.inlineComposition;
@@ -732,10 +948,165 @@ class Snapshotter {
     });
     if (composedAt === children.length) copy.appendChild(this.#composedSpan(composition!.text));
     this.#inShadow = outerInShadow;
-    [this.#absoluteContainer, this.#fixedContainer] = outer;
+    this.#clip = outerClip;
+    this.#ancestorChange = outerChange;
+    if (leaveOut) this.#lines.set(element, this.#holdLines(children));
     this.#copyScroll(element, copy);
     this.#hideScrollbars(element, copy, style);
     return copy;
+  }
+
+  /** The viewport, as edges. */
+  #viewport(): Edges {
+    return { left: 0, top: 0, right: this.#window.innerWidth, bottom: this.#window.innerHeight };
+  }
+
+  /**
+   * What shows of an element's children: what shows of the element, cut by
+   * it if it is a scroll container. An absolute or fixed element may be
+   * placed outside its parents' scroll containers: from the viewport. Not cut
+   * by <html> or <body>, whose overflow may be the viewport's.
+   */
+  #clipOf(element: Element, style: CSSStyleDeclaration): Edges {
+    const positioned = style.position === "absolute" || style.position === "fixed";
+    const clip = positioned ? this.#viewport() : this.#clip;
+    if (element === this.#document.documentElement || element === this.#document.body) return clip;
+    const clipsX = style.overflowX !== "visible";
+    const clipsY = style.overflowY !== "visible";
+    if (!clipsX && !clipsY) return clip;
+    const box = element.getBoundingClientRect();
+    return {
+      left: clipsX ? Math.max(clip.left, box.left) : clip.left,
+      right: clipsX ? Math.min(clip.right, box.right) : clip.right,
+      top: clipsY ? Math.max(clip.top, box.top) : clip.top,
+      bottom: clipsY ? Math.min(clip.bottom, box.bottom) : clip.bottom,
+    };
+  }
+
+  /** The size to copy an element empty at (see LeaveOut), or null to copy it as it is. */
+  #leavesOut(
+    element: Element,
+    style: CSSStyleDeclaration,
+  ): { width: number; height: number } | null {
+    const leaveOut = this.#options.leaveOut;
+    if (!leaveOut || this.#inShadow || !element.firstChild) return null;
+    if (!(element instanceof this.#window.HTMLElement) || KEPT_WHOLE.has(element.tagName))
+      return null;
+    if (element === this.#document.body || shadowRootOf(element)) return null;
+    // All that is in it is as the last snapshot that copied it found it.
+    const summary = leaveOut.summaries.get(element);
+    if (!summary?.contained || summary.version !== leaveOut.version) return null;
+    if (Math.max(leaveOut.changes.within(element), this.#ancestorChange) > summary.at) return null;
+    // Far from what shows. What it holds may run past its box (downwards, and right).
+    const positioned = style.position === "absolute" || style.position === "fixed";
+    const clip = positioned ? this.#viewport() : this.#clip;
+    const box = element.getBoundingClientRect();
+    const { x, y } = leaveOut.margin;
+    if (
+      box.top <= clip.bottom + y &&
+      box.left <= clip.right + x &&
+      box.top + Math.max(box.height, element.scrollHeight) >= clip.top - y &&
+      box.left + Math.max(box.width, element.scrollWidth) >= clip.left - x
+    )
+      return null;
+    // A block that lays out what is in it on its own.
+    if (!BLOCK_LEVEL_BOX.test(style.display)) return null;
+    const parent = flatParent(element);
+    const parentStyle = parent && this.#styles.get(parent);
+    if (!parentStyle) return null;
+    const item = /^(inline-)?(flex|grid)$/.test(parentStyle.display);
+    // Aligned by its first line, which it has no more.
+    if (
+      item &&
+      /baseline/.test(`${style.alignSelf} ${parentStyle.alignItems} ${style.justifySelf}`)
+    )
+      return null;
+    const ownContext =
+      item ||
+      /^(flow-root|flex|grid)$/.test(style.display) ||
+      !/^(visible|clip)$/.test(style.overflowX) ||
+      !/^(visible|clip)$/.test(style.overflowY) ||
+      (style.cssFloat || "none") !== "none" ||
+      positioned ||
+      /paint|layout|strict|content/.test(style.contain ?? "");
+    // Or that holds only lines: no margin goes through it, and nothing floats out of it.
+    const lines =
+      summary.lines &&
+      !ownContext &&
+      // A drop cap floats too.
+      ["::first-letter", "::before", "::after"].every(
+        (pseudo) => (this.#window.getComputedStyle(element, pseudo).cssFloat || "none") === "none",
+      );
+    if ((!ownContext && !lines) || this.#sizedByContent(parent)) return null;
+    // What a :has() may match: the rules with it would not match the copy as they do the page.
+    for (const { anchor, check } of leaveOut.relational ?? []) {
+      try {
+        if ((anchor === "*" || element.closest(anchor)) && element.querySelector(check))
+          return null;
+      } catch {
+        return null;
+      }
+    }
+    const size = layoutSize(element, style);
+    // Margins go through an empty box (which a box with a line in it is not).
+    if (!size || size.height === 0) return null;
+    // Its box as laid out, unrounded (the computed size is rounded to a few
+    // digits, enough to move what follows across a pixel), unless transformed.
+    const exact = (shown: number, laidOut: number) =>
+      Math.abs(shown - laidOut) < 0.01 ? shown : laidOut;
+    return { width: exact(box.width, size.width), height: exact(box.height, size.height) };
+  }
+
+  /**
+   * Whether an element, or a parent of it, sizes or lays out what is in it by
+   * how it would lay out: a table (whose columns are as wide as their
+   * content), or columns (which share content out by its lines).
+   */
+  #sizedByContent(element: Element | null): boolean {
+    for (let box = element; box; box = flatParent(box)) {
+      let sized = this.#contentSized.get(box);
+      if (sized === undefined) {
+        const style = this.#styles.get(box);
+        sized =
+          !!style &&
+          (/table/.test(style.display) ||
+            (style.columnCount || "auto") !== "auto" ||
+            (style.columnWidth || "auto") !== "auto");
+        this.#contentSized.set(box, sized);
+      }
+      if (sized) return true;
+    }
+    return false;
+  }
+
+  /** Whether each element is sized by its content (see sizedByContent), read once. */
+  readonly #contentSized = new Map<Element, boolean>();
+
+  /** Copies an element empty, at its size (see LeaveOut). */
+  #leaveOut(
+    element: Element,
+    copy: Element,
+    { width, height }: { width: number; height: number },
+  ): void {
+    const summary = this.#options.leaveOut!.summaries.get(element)!;
+    this.#leftOutElement = element;
+    // The elements with a z-index in it stack in it, and in its parents (see zOrdered).
+    if (summary.zIndexed) {
+      this.#zIndexed = true;
+      for (
+        let box: Element | null = element;
+        box && !this.#zOrdered.has(box);
+        box = flatParent(box)
+      )
+        this.#zOrdered.add(box);
+    }
+    const size = (side: string, px: number) =>
+      `${side}:${px}px!important;min-${side}:${px}px!important;max-${side}:${px}px!important`;
+    const pinned = `box-sizing:border-box!important;${size("width", width)};${size("height", height)}`;
+    const own = (copy as HTMLElement).style.cssText;
+    (copy as HTMLElement).style.cssText = own ? `${own};${pinned}` : pinned;
+    // Not empty, as the page's is not (:empty).
+    copy.appendChild(this.#inert.createTextNode("\u200b"));
   }
 
   /** Notes a shadow root copied: for the flat tree (an open one), whoever snapshots, and its animations. */
@@ -851,6 +1222,7 @@ class Snapshotter {
     if (popover) copy.setAttribute(POPOVER_OPEN_ATTRIBUTE, "");
     if (modal) copy.setAttribute(MODAL_ATTRIBUTE, "");
     this.topLayer.push({ live: element, copy: copy as HTMLElement });
+    this.#ownReach = -1;
   }
 
   /** Notes what a copy is of, and where it is positioned from if it is absolute or fixed. */
@@ -865,17 +1237,41 @@ class Snapshotter {
     if (stacked && style.zIndex !== "auto" && style.zIndex !== "") {
       for (let box = parentElement; box && !this.#zOrdered.has(box); box = flatParent(box))
         this.#zOrdered.add(box);
+      this.#ownZIndexed = true;
     }
     const fixed = style.position === "fixed";
     if (fixed || style.position === "absolute") {
-      const container = fixed ? this.#fixedContainer : this.#absoluteContainer;
+      const container = this.#containerOf(live, fixed);
       this.#positioned.set(live, { copy, fixed, container });
+      this.#ownReach = Math.min(
+        this.#ownReach,
+        container ? (this.#depthOf.get(container) ?? -1) : -1,
+      );
       if (fixed) {
         for (let box = flatParent(live); box && box !== container; box = flatParent(box))
           this.#holdingFixed.add(box);
       }
     }
     return copy;
+  }
+
+  /**
+   * The page's containing block of an absolute or fixed element: its nearest
+   * parent (copied before it) that is one; null for the initial containing
+   * block (absolute) or the viewport (fixed).
+   */
+  #containerOf(live: Element, fixed: boolean): Element | null {
+    for (let box = flatParent(live); box; box = flatParent(box)) {
+      const style = this.#styles.get(box);
+      if (!style) return null;
+      let contains = this.#contains.get(box);
+      if (contains === undefined) {
+        contains = containsFixed(style) ? "fixed" : containsAbsolute(style) ? "absolute" : null;
+        this.#contains.set(box, contains);
+      }
+      if (contains === "fixed" || (contains === "absolute" && !fixed)) return box;
+    }
+    return null;
   }
 
   #copyFormState(element: Element, copy: Element): void {
@@ -1072,10 +1468,17 @@ class Snapshotter {
     const values = this.#animated.get(element);
     if (!values?.size || !isStyled(copy)) return;
     const computed = this.#window.getComputedStyle(element);
+    const declarations: string[] = [];
     for (const [property, value] of values) {
       const baked = value ?? computed.getPropertyValue(property);
-      if (baked) copy.style.setProperty(property, this.#inlineUrls(baked), "important");
+      if (baked) declarations.push(`${property}:${this.#inlineUrls(baked)}!important`);
     }
+    if (declarations.length === 0) return;
+    // Added to its style in one go: setting each property parses and
+    // serializes the whole style again (an element may have dozens of them).
+    // Set as CSS text, longhands are written back as their shorthand.
+    const own = copy.style.cssText;
+    copy.style.cssText = own ? `${own};${declarations.join(";")}` : declarations.join(";");
   }
 
   /** A value with its url()s inlined: the image loads nothing. */

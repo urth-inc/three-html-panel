@@ -364,6 +364,99 @@ export function splitSelectorList(selector: string): string[] {
   return out.filter(Boolean);
 }
 
+/** The elements a :has() may be about (see DocumentCss.relationalCheck), in those `anchor` matches. */
+export interface RelationalCheck {
+  anchor: string;
+  check: string;
+}
+
+/** An argument of a :has() (see hasArguments). */
+export interface HasArgument {
+  /** The argument as a selector of its own, without the combinator it may start with (`> img`). */
+  selector: string;
+  /** That combinator ("" for none). */
+  combinator: string;
+  /** The compound selector the :has() is in, before it ("*" where that says nothing). */
+  anchor: string;
+}
+
+/** The arguments of a selector's :has(), and of those in them. */
+export function hasArguments(selector: string): HasArgument[] {
+  const out: HasArgument[] = [];
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]!;
+    if (char === "\\") i++;
+    else if (char === '"' || char === "'") {
+      for (i++; i < selector.length && selector[i] !== char; i++) if (selector[i] === "\\") i++;
+    } else if (char === ":" && selector.slice(i + 1, i + 5).toLowerCase() === "has(") {
+      const start = i + 5;
+      let depth = 1;
+      let end = start;
+      for (; end < selector.length && depth > 0; end++) {
+        const inner = selector[end]!;
+        if (inner === "\\") end++;
+        else if (inner === '"' || inner === "'") {
+          for (end++; end < selector.length && selector[end] !== inner; end++)
+            if (selector[end] === "\\") end++;
+        } else if (inner === "(") depth++;
+        else if (inner === ")") depth--;
+      }
+      const anchor = anchorOf(selector, i);
+      for (const argument of splitSelectorList(selector.slice(start, end - 1))) {
+        const combinator = /^[>+~]/.exec(argument)?.[0] ?? "";
+        const own = argument.slice(combinator.length).trim();
+        if (own) out.push({ selector: own, combinator, anchor }, ...hasArguments(own));
+      }
+      i = end - 1;
+    }
+  }
+  return out;
+}
+
+/** The compound selector a :has() at `at` in a selector is in, up to it ("*" if it says nothing more). */
+function anchorOf(selector: string, at: number): string {
+  let depth = 0;
+  let start = at;
+  for (; start > 0; start--) {
+    const char = selector[start - 1]!;
+    if (char === ")" || char === "]") depth++;
+    else if (char === "(" || char === "[") {
+      if (depth === 0) break;
+      depth--;
+    } else if (depth === 0 && /[\s>+~,]/.test(char)) break;
+  }
+  const anchor = selector.slice(start, at);
+  return anchor && !/:has\(/i.test(anchor) ? anchor : "*";
+}
+
+/**
+ * A selector for the elements in a box that, if left out of it, could make an
+ * argument of a :has() no longer match (see LeaveOut in snapshot.ts): what it
+ * matches, or only the box's children for one about children (`> img`); null
+ * for one about siblings only (`+ li`), as the box's children and theirs are
+ * all left out together.
+ */
+function relationalCheckOf({ selector, combinator }: HasArgument): string | null {
+  if (!isCompound(selector)) return selector;
+  if (combinator === ">") return `:scope > ${selector}`;
+  return combinator ? null : selector;
+}
+
+/** Whether a selector is a compound one: no combinator outside its parentheses, brackets and quotes. */
+function isCompound(selector: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]!;
+    if (char === "\\") i++;
+    else if (char === '"' || char === "'") {
+      for (i++; i < selector.length && selector[i] !== char; i++) if (selector[i] === "\\") i++;
+    } else if (char === "(" || char === "[") depth++;
+    else if (char === ")" || char === "]") depth--;
+    else if (depth === 0 && /[\s>+~]/.test(char)) return false;
+  }
+  return true;
+}
+
 /** The selector of a nested style rule (`&` or a descendant of its parent's), as a top-level one. */
 export function nestedSelector(parent: string | null, selector: string): string {
   if (parent === null) return selector;
@@ -422,6 +515,13 @@ function mapCss(piece: CssPiece, map: (css: string) => string): CssPiece {
 }
 
 /** The piece's CSS, without the rules `keep` says are not used (null if nothing is left of it). */
+/** The test selectors of a piece's rules (and of its blocks'). */
+function testsOf(piece: CssPiece): string[] {
+  if (typeof piece === "string") return [];
+  if ("pieces" in piece) return piece.pieces.flatMap(testsOf);
+  return "test" in piece ? [piece.test] : [];
+}
+
 function renderPiece(piece: CssPiece, keep: (piece: CssPiece) => boolean): string | null {
   if (typeof piece === "string") return piece;
   if (!("pieces" in piece)) return keep(piece) ? piece.css : null;
@@ -620,10 +720,26 @@ export const stylesheetsSignature = (parts: [CSSStyleSheet | null, string][]) =>
 export class DocumentCss {
   /** Null until collected (a page without stylesheets has the signature ""). */
   #signature: string | null = null;
+  /** The sheets as collected, before their url() are inlined (see reinline). */
+  #collected: CssPiece[][] = [];
   /** The sheets as collected, their url() inlined: rendered as CSS by get(). */
   #sheets: CssPiece[][] = [];
-  /** The CSS get() rendered last, and for what (the version it was given, and #fontsVersion). */
-  #rendered: { key: string; css: readonly string[] } | null = null;
+  /** The test selectors of the sheets' rules (see usedRuleTest), each once. */
+  #tests: string[] = [];
+  /** Bumped each time the sheets are collected (see generation). */
+  #generation = 0;
+  /** The url() in the sheets are to be inlined again (an image arrived). */
+  #reinline = false;
+  /**
+   * The CSS get() rendered last, and for what: the version it was given, and
+   * when pruning, how many test selectors had matched then and #fontsVersion
+   * (what it keeps changes with neither, see get()).
+   */
+  #rendered: {
+    key: string;
+    css: readonly string[];
+    pruned?: { matched: number; fontsVersion: number };
+  } | null = null;
   /** Bumped when a font face finished loading: an @font-face may be used now. */
   #fontsVersion = 0;
   /**
@@ -636,6 +752,13 @@ export class DocumentCss {
   readonly #names = new Map<string, RequiredNames[] | null>();
   #lost: LostDeclarations[] = [];
   /**
+   * What the :has() in the sheets' selectors are about (see relationalCheck):
+   * by their anchors, the elements their arguments may match, for the live page.
+   */
+  #relational = new Map<string, Set<string>>();
+  /** relationalCheck, once worked out for the sheets collected last. */
+  #relationalCheck: RelationalCheck[] | false | null | undefined;
+  /**
    * The lists of rules inside the sheets (of blocks, nested rules, imported
    * sheets) as they were collected, with how many rules each had: rules
    * inserted there change no sheet's own count.
@@ -647,6 +770,10 @@ export class DocumentCss {
    * and parsed here, keyed by URL.
    */
   readonly #fetched = new Map<string, CSSStyleSheet | "loading" | "failed">();
+  /** The text of the page's own stylesheets with rules that lost values (see keepWritten), keyed by URL. */
+  readonly #fetchedText = new Map<string, { text: string } | "loading" | "failed">();
+  /** The text each sheet's written blocks were found in (see keepWritten). */
+  readonly #writtenFrom = new WeakMap<CSSStyleSheet, string>();
   readonly #window: FrameWindow;
   readonly #document: Document;
   readonly #resolveUrl: (url: string) => string | null;
@@ -689,6 +816,16 @@ export class DocumentCss {
     this.#signature = null;
   }
 
+  /** Changes each time get() collects the sheets again: their rules (@keyframes too) may have changed. */
+  get generation(): number {
+    return this.#generation;
+  }
+
+  /** An image arrived: the url() in the sheets are inlined again (they are not collected again). */
+  reinline(): void {
+    this.#reinline = true;
+  }
+
   dispose(): void {
     this.#document.fonts?.removeEventListener("loadingdone", this.#fontsLoaded);
   }
@@ -709,22 +846,47 @@ export class DocumentCss {
     if (signature !== this.#signature || changedInside) {
       this.#inner = [];
       this.#lost = [];
+      this.#relational = new Map();
+      this.#relationalCheck = undefined;
       const out: CssPiece[][] = [[DEFAULT_FOCUS_RING_CSS]];
       for (const sheet of sheets) this.#serializeSheet(sheet, out);
       out.push([FREEZE_ANIMATIONS_CSS]);
-      const inline = (css: string) => inlineCssUrls(css, this.#document.baseURI, this.#resolveUrl);
-      // A namespace's url() is a name, not a file to inline.
-      this.#sheets = out
-        .filter((rules) => rules.length > 0)
-        .map((rules) => rules.map((rule) => (isNamespace(rule) ? rule : mapCss(rule, inline))));
-      this.#rendered = null;
+      this.#collected = out.filter((rules) => rules.length > 0);
+      this.#tests = [...new Set(this.#collected.flat().flatMap(testsOf))];
+      this.#reinline = true;
       this.#matchedTests = new Set();
       this.#signature = signature;
+      this.#generation++;
+    }
+    if (this.#reinline) {
+      const inline = (css: string) => inlineCssUrls(css, this.#document.baseURI, this.#resolveUrl);
+      // A namespace's url() is a name, not a file to inline.
+      this.#sheets = this.#collected.map((rules) =>
+        rules.map((rule) => (isNamespace(rule) ? rule : mapCss(rule, inline))),
+      );
+      this.#rendered = null;
+      this.#reinline = false;
     }
     const pruning = this.#prune && version !== undefined;
     const key = pruning ? `${version}:${this.#fontsVersion}` : "all";
-    if (this.#rendered?.key !== key)
-      this.#rendered = { key, css: this.#render(pruning ? this.#usedRules() : () => true) };
+    const rendered = this.#rendered;
+    if (rendered?.key === key) return rendered.css;
+    if (!pruning) {
+      this.#rendered = { key, css: this.#render(() => true) };
+      return this.#rendered.css;
+    }
+    // Matched tests stay matched (see matchedTests): what is kept changes only
+    // when one more matches, or a face loads.
+    this.#matchTests();
+    const pruned = { matched: this.#matchedTests.size, fontsVersion: this.#fontsVersion };
+    if (
+      rendered?.pruned?.matched === pruned.matched &&
+      rendered.pruned.fontsVersion === pruned.fontsVersion
+    ) {
+      this.#rendered = { ...rendered, key };
+      return rendered.css;
+    }
+    this.#rendered = { key, css: this.#render(this.#usedRules()), pruned };
     return this.#rendered.css;
   }
 
@@ -738,45 +900,42 @@ export class DocumentCss {
     });
   }
 
-  /** Whether a rule is used now: its selector matches an element, its font face is not left unloaded. */
-  #usedRules(): (piece: CssPiece) => boolean {
-    const unmatched = new Set<string>();
+  /** Looks for the test selectors that matched no element so far: those that match now are added to matchedTests. */
+  #matchTests(): void {
     let present: { classes: Set<string>; ids: Set<string> } | null = null;
     // In quirks mode, classes and ids match whatever their case.
     const readNames = this.#document.compatMode !== "BackCompat";
+    for (const test of this.#tests) {
+      if (this.#matchedTests.has(test)) continue;
+      let names = this.#names.get(test);
+      if (names === undefined) this.#names.set(test, (names = requiredNames(test)));
+      if (names && readNames) {
+        present ??= this.#presentNames();
+        const { classes, ids } = present;
+        const impossible = names.every(
+          (part) =>
+            part.classes.some((name) => !classes.has(name)) ||
+            part.ids.some((name) => !ids.has(name)),
+        );
+        if (impossible) continue;
+      }
+      let used: boolean;
+      try {
+        used = this.#document.querySelector(test) !== null;
+      } catch {
+        // Not a selector this browser takes as it is: kept, to be safe.
+        used = true;
+      }
+      if (used) this.#matchedTests.add(test);
+    }
+  }
+
+  /** Whether a rule is used now (once matchTests looked): its selector matched an element, its font face is not left unloaded. */
+  #usedRules(): (piece: CssPiece) => boolean {
     let loadedFaces: Map<string, boolean> | null = null;
     return (piece) => {
       if (typeof piece === "string" || "pieces" in piece) return true;
-      if ("test" in piece) {
-        const { test } = piece;
-        if (this.#matchedTests.has(test)) return true;
-        if (unmatched.has(test)) return false;
-        let names = this.#names.get(test);
-        if (names === undefined) this.#names.set(test, (names = requiredNames(test)));
-        if (names && readNames) {
-          present ??= this.#presentNames();
-          const { classes, ids } = present;
-          const impossible = names.every(
-            (part) =>
-              part.classes.some((name) => !classes.has(name)) ||
-              part.ids.some((name) => !ids.has(name)),
-          );
-          if (impossible) {
-            unmatched.add(test);
-            return false;
-          }
-        }
-        let used: boolean;
-        try {
-          used = this.#document.querySelector(test) !== null;
-        } catch {
-          // Not a selector this browser takes as it is: kept, to be safe.
-          used = true;
-        }
-        if (used) this.#matchedTests.add(test);
-        else unmatched.add(test);
-        return used;
-      }
+      if ("test" in piece) return this.#matchedTests.has(piece.test);
       if (!loadedFaces) {
         loadedFaces = new Map();
         for (const face of this.#document.fonts ?? []) {
@@ -798,6 +957,37 @@ export class DocumentCss {
       if (element.id) ids.add(element.id);
     }
     return { classes, ids };
+  }
+
+  /**
+   * What the :has() in the sheets get() collected are about: the elements
+   * their arguments may match (as if each stood alone), in the elements
+   * their anchors match. Null if the sheets have no :has(); false if an
+   * argument is no selector of its own to this browser.
+   */
+  get relationalCheck(): readonly RelationalCheck[] | false | null {
+    if (this.#relationalCheck === undefined) {
+      const valid = (selector: string) => {
+        try {
+          this.#document.createDocumentFragment().querySelector(selector);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const checks: RelationalCheck[] = [];
+      for (const [anchor, selectors] of this.#relational) {
+        const check = [...selectors].join(",");
+        if (!valid(check)) {
+          checks.length = 0;
+          break;
+        }
+        checks.push({ anchor: valid(anchor) ? anchor : "*", check });
+      }
+      this.#relationalCheck =
+        this.#relational.size === 0 ? null : checks.length > 0 ? checks : false;
+    }
+    return this.#relationalCheck;
   }
 
   /**
@@ -823,6 +1013,7 @@ export class DocumentCss {
     if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
+    if (sheet === source) this.#keepWritten(sheet);
     // An imported sheet's rules count in no document sheet's (see get()).
     if (imported) this.#watch(sheet.cssRules);
     const all = Array.from(sheet.cssRules);
@@ -878,6 +1069,18 @@ export class DocumentCss {
       if (rule instanceof CSSStyleRule) {
         const selector = nestedSelector(parent, rule.selectorText);
         this.#noteLost(rule, selector);
+        if (/:has\(/i.test(selector))
+          for (const argument of hasArguments(selector)) {
+            const check = relationalCheckOf(argument);
+            if (!check) continue;
+            // About siblings of a parent's (`+ .x .y`): of any element.
+            const anchor =
+              argument.combinator && argument.combinator !== ">" ? "*" : argument.anchor;
+            const key = liveSelector(anchor) ?? anchor;
+            let checks = this.#relational.get(key);
+            if (!checks) this.#relational.set(key, (checks = new Set()));
+            checks.add(liveSelector(check) ?? check);
+          }
         if (rule.cssRules.length === 0) {
           const css = `${rewriteSelector(rule.selectorText)}{${declarationsOf(rule)}}`;
           // A nested rule's selector is relative to its parent's: kept.
@@ -944,6 +1147,41 @@ export class DocumentCss {
 
   #watch(rules: CSSRuleList): void {
     this.#inner.push({ rules, length: rules.length });
+  }
+
+  /**
+   * Keeps the written blocks of the rules of one of the page's sheets that
+   * lost values (see keepWrittenBlocks), from its text: a <style>'s, or a
+   * stylesheet's fetched (once; the sheets are collected again when it
+   * arrives). The copy then has their declarations as written, var() and
+   * all, rather than taking their values from the computed style of each
+   * element they match, on every frame.
+   */
+  #keepWritten(sheet: CSSStyleSheet): void {
+    const owner = sheet.ownerNode;
+    let text: string | null = null;
+    if (owner instanceof this.#window.HTMLStyleElement) text = owner.textContent ?? "";
+    else if (sheet.href) {
+      const fetched = this.#fetchedText.get(sheet.href);
+      if (typeof fetched === "object") text = fetched.text;
+      else if (fetched === undefined && Array.from(sheet.cssRules).some(lostAnywhere)) {
+        const href = sheet.href;
+        this.#fetchedText.set(href, "loading");
+        fetch(href)
+          .then((response) =>
+            response.ok ? response.text() : Promise.reject(new Error(String(response.status))),
+          )
+          .then((fetchedText) => {
+            this.#fetchedText.set(href, { text: fetchedText });
+            this.invalidate();
+            this.#onChange();
+          })
+          .catch(() => this.#fetchedText.set(href, "failed"));
+      }
+    }
+    if (text === null || this.#writtenFrom.get(sheet) === text) return;
+    this.#writtenFrom.set(sheet, text);
+    keepWrittenBlocks(sheet.cssRules, text, () => new this.#window.CSSStyleSheet());
   }
 
   /**

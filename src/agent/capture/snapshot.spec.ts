@@ -5,7 +5,9 @@ import {
   isSampledLive,
   matchLostDeclarations,
   snapshotDocument,
+  type LeaveOut,
 } from "./snapshot";
+import { PageChanges } from "./page-changes";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -107,6 +109,27 @@ describe("animated values in the image", () => {
     // jsdom's computed value is the element's own; in a browser, the animated one.
     expect(spinning.style.getPropertyValue("opacity")).toBe("0.3");
     expect(spinning.style.getPropertyPriority("opacity")).toBe("important");
+  });
+
+  it("reads a CSS animation's keyframes once while the stylesheets stay, a script's every time", () => {
+    document.body.innerHTML = `<div id="box" style="opacity: 0.3"></div>`;
+    const box = document.querySelector("#box")!;
+    const keyframes = [{ computedOffset: 0, opacity: "0" }];
+    const endless = { iterations: Number.POSITIVE_INFINITY };
+    const css = Object.assign(animation(box, keyframes, endless), { animationName: "spin" });
+    const script = animation(box, keyframes, endless);
+    const read = (of: Animation) => vi.spyOn(of.effect as KeyframeEffect, "getKeyframes");
+    const [cssReads, scriptReads] = [read(css), read(script)];
+    document.getAnimations = () => [css, script];
+    const animatedProperties = { version: "1", properties: new WeakMap() };
+    const options = { inlineImage: () => null, animatedProperties };
+    snapshotDocument(document, options);
+    snapshotDocument(document, options);
+    expect(cssReads).toHaveBeenCalledTimes(1);
+    expect(scriptReads).toHaveBeenCalledTimes(2);
+    animatedProperties.version = "2";
+    snapshotDocument(document, options);
+    expect(cssReads).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1607,5 +1630,109 @@ describe("the top layer", () => {
     document.body.innerHTML = `<dialog id="ask" style="width: 200px; height: 100px; padding: 0; border: 0; box-sizing: border-box; translate: -50% -25%; scale: 0.5">Sure?</dialog>`;
     snapshotWithTopLayer({ ask: ":modal" });
     expect(made).toEqual(["translate3d(-100px,-25px,0px) scale3d(0.5,0.5,1)"]);
+  });
+});
+
+describe("boxes far out of view", () => {
+  function leaveOut(extra: Partial<LeaveOut> = {}): LeaveOut {
+    return {
+      version: "1",
+      changes: new PageChanges(),
+      summaries: new WeakMap(),
+      relational: null,
+      anchors: false,
+      margin: { x: 256, y: 192 },
+      ...extra,
+    };
+  }
+
+  /** Lays out an element (by id) at this top, 300 by 100 (jsdom has no layout). */
+  function at(id: string, top: number): void {
+    document.getElementById(id)!.getBoundingClientRect = () => new DOMRect(0, top, 300, 100);
+  }
+
+  function snapshot(options: LeaveOut): Document {
+    const xhtml = snapshotDocument(document, { inlineImage: () => null, leaveOut: options });
+    return new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+  }
+
+  const BOX = "display: flow-root; width: 300px; height: 100px";
+
+  it("copies one empty, at its size, once a snapshot copied it all", () => {
+    document.body.innerHTML = `<div id="far" style="${BOX}"><p>Far down</p></div>`;
+    at("far", 5000);
+    const options = leaveOut();
+    // What is in it is not known yet: copied whole.
+    expect(snapshot(options).querySelector("#far p")).not.toBeNull();
+    const far = snapshot(options).getElementById("far") as HTMLElement;
+    expect(far.children).toHaveLength(0);
+    // Not :empty, as the page's is not.
+    expect(far.textContent).toBe("\u200b");
+    for (const property of ["width", "min-width", "max-width"]) {
+      expect(far.style.getPropertyValue(property)).toBe("300px");
+      expect(far.style.getPropertyPriority(property)).toBe("important");
+    }
+    expect(far.style.getPropertyValue("height")).toBe("100px");
+  });
+
+  it("copies one in view whole", () => {
+    document.body.innerHTML = `<div id="near" style="${BOX}"><p>Near</p></div>`;
+    at("near", 700);
+    const options = leaveOut();
+    snapshot(options);
+    expect(snapshot(options).querySelector("#near p")).not.toBeNull();
+  });
+
+  it("copies one whole once something in it changed, or its parents did", () => {
+    document.body.innerHTML = `<section id="parent"><div id="far" style="${BOX}"><p id="text">Far down</p></div></section>`;
+    at("far", 5000);
+    const options = leaveOut();
+    snapshot(options);
+    options.changes.changed(document.getElementById("text")!);
+    expect(snapshot(options).querySelector("#far p")).not.toBeNull();
+    expect(snapshot(options).querySelector("#far p")).toBeNull();
+    options.changes.changed(document.getElementById("parent")!);
+    expect(snapshot(options).querySelector("#far p")).not.toBeNull();
+  });
+
+  it("copies one whole with something in it placed from outside it", () => {
+    document.body.innerHTML = `<div id="far" style="${BOX}"><p style="position: fixed">Pinned</p></div>`;
+    at("far", 5000);
+    const options = leaveOut();
+    snapshot(options);
+    expect(snapshot(options).querySelector("#far p")).not.toBeNull();
+  });
+
+  it("copies one empty with something in it placed from it", () => {
+    document.body.innerHTML = `<div id="far" style="${BOX}; position: relative"><p style="position: absolute">In it</p></div>`;
+    at("far", 5000);
+    const options = leaveOut();
+    snapshot(options);
+    expect(snapshot(options).querySelector("#far p")).toBeNull();
+  });
+
+  it("copies a block whole when the margins of blocks in it could go through it, not when it holds lines", () => {
+    document.body.innerHTML =
+      `<div id="blocks" style="display: block; overflow: visible; width: 300px; height: 100px"><p>A</p></div>` +
+      `<div id="lines" style="display: block; overflow: visible; width: 300px; height: 100px">Some <b>text</b></div>`;
+    at("blocks", 5000);
+    at("lines", 5200);
+    const options = leaveOut();
+    snapshot(options);
+    const copy = snapshot(options);
+    expect(copy.querySelector("#blocks p")).not.toBeNull();
+    expect(copy.querySelector("#lines b")).toBeNull();
+  });
+
+  it("copies one whole with what a :has() of its parents' looks for in it", () => {
+    document.body.innerHTML = `<div class="card"><div id="far" style="${BOX}"><i class="icon"></i></div></div>`;
+    at("far", 5000);
+    const options = leaveOut({ relational: [{ anchor: ".card", check: ".icon" }] });
+    snapshot(options);
+    expect(snapshot(options).querySelector("#far i")).not.toBeNull();
+    // Not for an anchor it is not in.
+    const elsewhere = leaveOut({ relational: [{ anchor: ".list", check: ".icon" }] });
+    snapshot(elsewhere);
+    expect(snapshot(elsewhere).querySelector("#far i")).toBeNull();
   });
 });

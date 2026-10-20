@@ -296,6 +296,7 @@ describe("@import rules", () => {
     // middle imports deepest into layer "reset"; top imports middle into "base".
     const middleImporting = Object.create(window.CSSStyleSheet.prototype, {
       href: { value: null },
+      ownerNode: { value: null },
       disabled: { value: false },
       cssRules: {
         value: [
@@ -370,5 +371,114 @@ describe("@namespace rules", () => {
     });
     const sheets = new DocumentCss(document, () => null).get();
     expect(sheets[1]!.startsWith('@namespace app url("app");')).toBe(true);
+  });
+});
+
+describe("rendering again", () => {
+  it("keeps the CSS rendered while no other rule is used, and renders it again when one is", () => {
+    document.head.innerHTML = "<style>.a { color: red } .b { color: blue }</style>";
+    document.body.innerHTML = '<p class="a"></p>';
+    const css = new DocumentCss(document, () => null, undefined, { prune: true });
+    const first = css.get(1);
+    document.body.innerHTML = '<p class="a"></p><p class="a"></p>';
+    // Another version, the same rules used: the same CSS, not rendered again.
+    expect(css.get(2)).toBe(first);
+    document.body.innerHTML = '<p class="b"></p>';
+    const later = css.get(3);
+    expect(later).not.toBe(first);
+    // A rule used once is kept (see matchedTests).
+    expect(later.join("\n")).toContain(".a{");
+    expect(later.join("\n")).toContain(".b{");
+    document.body.innerHTML = "";
+  });
+
+  it("inlines a url() again when its image arrives, without collecting the sheets again", () => {
+    document.head.innerHTML =
+      '<style>.a { background-image: url("https://site.test/a.png") }</style>';
+    let image: string | null = null;
+    const css = new DocumentCss(document, () => image);
+    expect(css.get().join("\n")).not.toContain("data:");
+    const generation = css.generation;
+    image = "data:image/png;base64,AAAA";
+    css.reinline();
+    expect(css.get().join("\n")).toContain("data:image/png;base64,AAAA");
+    expect(css.generation).toBe(generation);
+  });
+});
+
+describe("the declarations a <style> wrote", () => {
+  it("are taken for its rules that lost values in the CSSOM, rather than the computed style", () => {
+    const written = ".a { border: 1px solid var(--a); border-top-color: red }";
+    document.head.innerHTML = `<style>${written}</style>`;
+    // As browsers have it (jsdom drops the shorthand instead): its longhands
+    // are there, without their values. The text is what the browser's parser
+    // gives for the statement alone, so the two are matched.
+    const lossy = Object.create(window.CSSStyleRule.prototype, {
+      selectorText: { value: ".a" },
+      cssText: { value: new DocumentCssProbe().cssTextOf(written) },
+      cssRules: { value: [] },
+      style: {
+        value: {
+          cssText: "border-top-style: ;",
+          length: 1,
+          item: () => "border-top-style",
+          getPropertyValue: () => "",
+        },
+      },
+    }) as CSSStyleRule;
+    const sheet = {
+      href: null,
+      disabled: false,
+      ownerNode: document.head.querySelector("style"),
+      cssRules: [lossy],
+    } as unknown as CSSStyleSheet;
+    vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+    const css = new DocumentCss(document, () => null);
+    expect(css.get()[1]).toBe(".a{ border: 1px solid var(--a); border-top-color: red }");
+    expect(css.lost).toEqual([]);
+  });
+});
+
+/** What this browser's parser makes of a rule's text alone (see keepWrittenBlocks). */
+class DocumentCssProbe {
+  cssTextOf(text: string): string {
+    const sheet = new window.CSSStyleSheet();
+    sheet.replaceSync(text);
+    return sheet.cssRules[0]!.cssText;
+  }
+}
+
+describe("relationalCheck", () => {
+  const checks = (css: string) => {
+    document.head.innerHTML = `<style>${css}</style>`;
+    const documentCss = new DocumentCss(document, () => null);
+    documentCss.get();
+    return documentCss.relationalCheck;
+  };
+
+  it("is null without :has()", () => {
+    expect(checks(".a { color: red }")).toBeNull();
+  });
+
+  it("gives what each :has() is about, in the elements its anchor matches", () => {
+    expect(
+      checks(
+        ".card:has(> .icon) { color: red } .list:has(.item.open) { color: red } li:has(+ li.active) { color: red }",
+      ),
+    ).toEqual([
+      // About its children only.
+      { anchor: ".card", check: ":scope > .icon" },
+      { anchor: ".list", check: ".item.open" },
+      // About siblings only (`+ li.active`): nothing to look for in a box left out whole.
+    ]);
+  });
+
+  it("looks into a :has() in another, and anywhere for one about a parent's siblings", () => {
+    expect(checks(".x:has(.y:has(.z)) { color: red } .p:has(~ .q .r) { color: red }")).toEqual([
+      { anchor: ".x", check: ".y:has(.z)" },
+      // The one inside is about its own anchor's (.y).
+      { anchor: ".y", check: ".z" },
+      { anchor: "*", check: ".q .r" },
+    ]);
   });
 });

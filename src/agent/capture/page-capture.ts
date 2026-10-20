@@ -29,7 +29,7 @@ import {
   visibleBoxOf,
 } from "../input/selection";
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types";
-import { DocumentCss, INTERACTION_ATTRIBUTES } from "./css";
+import { DocumentCss, INTERACTION_ATTRIBUTES, liveSelector } from "./css";
 import { ImageInliner } from "./images";
 import { LiveInteractionCss } from "./live-css";
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol";
@@ -41,14 +41,30 @@ import {
   isSampledLive,
   matchLostDeclarations,
   snapshotDocument,
+  type AnimatedProperties,
+  type LeaveOut,
   type ListBoxRow,
   type LostMatches,
   type ShadowStyles,
+  type SubtreeSummary,
 } from "./snapshot";
+import { PageChanges } from "./page-changes";
 import { rememberShadowRoot } from "../flat-tree";
 
 /** Events after which a form control's state (:checked, :valid…) may have changed, with no attribute. */
 const STATE_EVENTS = ["input", "change"];
+
+/** Events that change their target, maybe how what is in it is laid out, and change no attribute (see PageChanges). */
+const CHANGING_EVENTS = [...STATE_EVENTS, "toggle"];
+
+/**
+ * CSS that makes what is in one box change how another shows (a counter
+ * counted in it and shown after it): no box is copied empty (see LeaveOut)
+ * on a page that has any.
+ */
+const NONLOCAL_CSS = /counter-(increment|set)/;
+/** CSS that anchors boxes to others (see LeaveOut.anchors). */
+const ANCHOR_CSS = /anchor-name/;
 
 /** Events after which the page may look different. */
 const INVALIDATING_EVENTS = [
@@ -123,6 +139,15 @@ export class PageCapture {
   #drawnShadowRoots: ShadowRoot[] = [];
   /** The styles of what is drawn in shadow trees, kept while the page and its layout stay (see ShadowStyles). */
   readonly #shadowStyles: ShadowStyles = { version: "", computed: new WeakMap() };
+  /** Where the page changed, and what the snapshots found in its boxes (see LeaveOut). */
+  readonly #changes = new PageChanges();
+  readonly #summaries = new WeakMap<Element, SubtreeSummary>();
+  /** Bumped when what is in the page's boxes may have changed everywhere (see LeaveOut.version). */
+  #leaveOutEpoch = 0;
+  /** Whether the page's CSS lets boxes be copied empty (see NONLOCAL_CSS), by the sheets DocumentCss gave. */
+  #localCss: { sheets: readonly string[]; local: boolean; anchors: boolean } | null = null;
+  /** The properties CSS animations animate, kept while the page's stylesheets stay (see AnimatedProperties). */
+  readonly #animatedProperties: AnimatedProperties = { version: "", properties: new WeakMap() };
   readonly #pacer = new RenderPacer();
   #dirty = true;
   #timer = 0;
@@ -154,6 +179,8 @@ export class PageCapture {
    */
   #lostMatches: {
     lost: DocumentCss["lost"];
+    /** Whether any of their selectors matches the agent's interaction marks (see lostElements). */
+    interactive: boolean;
     version: number;
     matches: LostMatches;
   } | null = null;
@@ -189,7 +216,8 @@ export class PageCapture {
     this.#options = options;
     this.#window = document.defaultView as FrameWindow;
     this.#images = new ImageInliner(() => {
-      this.#css.invalidate();
+      // Its data URL goes into the url() of the sheets that use it.
+      this.#css.reinline();
       this.#changed();
     });
     this.#css = new DocumentCss(
@@ -198,6 +226,7 @@ export class PageCapture {
       () => {
         // A cross-origin stylesheet's copy arrived: its interaction rules apply to the live page too.
         this.#liveCss.reset();
+        this.#leaveOutEpoch++;
         this.#changed();
       },
       { prune: true, onFontsLoaded: () => this.#changed() },
@@ -208,12 +237,14 @@ export class PageCapture {
       () => {
         // A rule may have changed in place (an adopted sheet replaced with as many rules).
         this.#css.invalidate();
+        this.#leaveOutEpoch++;
         this.#changed();
       },
     );
     this.#openOrder = new OpenOrder(this.#window);
     this.#mutations = new this.#window.MutationObserver((records) => {
       this.#matchVersion++;
+      for (const { target } of records) this.#changes.changed(target);
       // The agent's own interaction marks: changing them is input, which says
       // itself whether the page may look different (see optimizeHover).
       const changes = records.filter(
@@ -268,11 +299,15 @@ export class PageCapture {
     for (const type of INVALIDATING_EVENTS)
       this.#window.addEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS) this.#window.addEventListener(type, this.#stateChanged, true);
+    for (const type of CHANGING_EVENTS)
+      this.#window.addEventListener(type, this.#targetChanged, true);
+    this.#window.addEventListener("resize", this.#resized, true);
     // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
     // of elements do not reach the window.
     document.addEventListener("load", this.#stylesheetsChanged, true);
     void document.fonts?.ready.then(() => {
       this.#css.invalidate();
+      this.#leaveOutEpoch++;
       this.#changed();
     });
   }
@@ -293,6 +328,7 @@ export class PageCapture {
     this.#lastCursor = "";
     this.#lastEditables = "";
     this.#css.invalidate();
+    this.#leaveOutEpoch++;
     this.#invalidate();
   }
 
@@ -341,6 +377,9 @@ export class PageCapture {
       this.#window.removeEventListener(type, this.#changed, true);
     for (const type of STATE_EVENTS)
       this.#window.removeEventListener(type, this.#stateChanged, true);
+    for (const type of CHANGING_EVENTS)
+      this.#window.removeEventListener(type, this.#targetChanged, true);
+    this.#window.removeEventListener("resize", this.#resized, true);
     this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
     this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
     this.#openOrder.dispose();
@@ -377,6 +416,16 @@ export class PageCapture {
     this.#ruleVersion++;
   };
 
+  readonly #targetChanged = (event: Event) => {
+    const target = event.target as Node | null;
+    if (target?.nodeType === Node.ELEMENT_NODE) this.#changes.changed(target);
+  };
+
+  /** Media queries may match otherwise: any rule may apply now. */
+  readonly #resized = () => {
+    this.#leaveOutEpoch++;
+  };
+
   readonly #transitionRan = () => {
     this.#sawTransition = true;
   };
@@ -389,8 +438,10 @@ export class PageCapture {
 
   readonly #stylesheetsChanged = (event: Event) => {
     const { HTMLLinkElement, HTMLStyleElement } = this.#window;
-    if (event.target instanceof HTMLLinkElement || event.target instanceof HTMLStyleElement)
+    if (event.target instanceof HTMLLinkElement || event.target instanceof HTMLStyleElement) {
+      this.#leaveOutEpoch++;
       this.#changed();
+    }
   };
 
   // A plain timer, not requestAnimationFrame: browsers may hold back rAF in an
@@ -472,6 +523,7 @@ export class PageCapture {
     // Collected first: the snapshot takes what the CSSOM lost of it from the page (DocumentCss.lost).
     const sheets = this.#css.get(this.#ruleVersion);
     this.#shadowStyles.version = `${this.#layoutVersion}:${this.#matchVersion}`;
+    this.#animatedProperties.version = String(this.#css.generation);
     const drawnShadowRoots: ShadowRoot[] = [];
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
     const xhtml = this.#measure(() =>
@@ -499,6 +551,8 @@ export class PageCapture {
           drawnShadowRoots.push(root);
         },
         shadowStyles: this.#shadowStyles,
+        animatedProperties: this.#animatedProperties,
+        leaveOut: this.#leaveOut(sheets, width, height),
       }),
     );
     this.#drawnShadowRoots = drawnShadowRoots;
@@ -507,6 +561,27 @@ export class PageCapture {
       this.#lastSvg = svg;
       this.#options.onFrame({ svg, width, height });
     }
+  }
+
+  /** What to leave out of the snapshot (see LeaveOut), unless the page's CSS does not let anything be. */
+  #leaveOut(sheets: readonly string[], width: number, height: number): LeaveOut | undefined {
+    if (this.#localCss?.sheets !== sheets)
+      this.#localCss = {
+        sheets,
+        local: !sheets.some((css) => NONLOCAL_CSS.test(css)),
+        anchors: sheets.some((css) => ANCHOR_CSS.test(css)),
+      };
+    const relational = this.#css.relationalCheck;
+    if (!this.#localCss.local || relational === false) return undefined;
+    if (this.#document.querySelector('[style*="counter-"]')) return undefined;
+    return {
+      version: `${this.#leaveOutEpoch}:${this.#css.generation}`,
+      changes: this.#changes,
+      summaries: this.#summaries,
+      relational,
+      anchors: this.#localCss.anchors || !!this.#document.querySelector('[style*="anchor-name"]'),
+      margin: { x: width / 4, y: height / 4 },
+    };
   }
 
   /** Watches a shadow root for changes as the page's document is: the document's observer does not see into it. */
@@ -564,10 +639,17 @@ export class PageCapture {
   #lostElements(): LostMatches {
     const lost = this.#css.lost;
     const cached = this.#lostMatches;
-    const version = this.#matchVersion;
+    // The agent's interaction marks change which elements match only selectors
+    // with :hover and the like in them (see liveSelector): a hover, or a
+    // scroll that moves the page under the pointer, does not match the others again.
+    const interactive =
+      cached?.lost === lost
+        ? cached.interactive
+        : lost.some(({ selector }) => liveSelector(selector) !== null);
+    const version = interactive ? this.#matchVersion : this.#ruleVersion;
     if (cached?.lost === lost && cached.version === version) return cached.matches;
     const matches = matchLostDeclarations(this.#document, lost);
-    this.#lostMatches = { lost, version, matches };
+    this.#lostMatches = { lost, interactive, version, matches };
     return matches;
   }
 
