@@ -30,10 +30,10 @@ The page runs in an `<iframe>` and loads a small script, the **agent**. On every
 
 ### Before you start
 
-- **Keep the page small.** Every frame is a copy of the whole page: its DOM, all of its CSS, and its fonts and images. A page that is light in a browser tab can be heavy in a panel. See [Performance](#performance-keep-the-page-small).
-- **Every page shown must load the agent.** Pages you build or serve can (one `<script>` tag, see [Adding the agent to a page](#adding-the-agent-to-a-page)); a server or proxy you run can insert it into others. Sites you do not control, such as google.com or YouTube, cannot be shown: this is not a browser in 3D.
-- **What the page loads from other origins needs CORS to be drawn**: images, stylesheets, fonts and video.
-- **Some things are not drawn**: iframes from other origins (videos, maps, ads, sign-in buttons), and native widgets the browser draws over the page, such as date pickers and video controls (`<select>`'s list is). See [Limitations](#limitations).
+- **Keep the page small**: every frame copies all of it. See [Performance](#performance-keep-the-page-small).
+- **Every page shown must load the agent** ([one `<script>` tag](#adding-the-agent-to-a-page), or a proxy you run inserts it). Sites you do not control, such as YouTube, cannot be shown: this is not a browser in 3D.
+- **Resources from other origins need CORS** to be drawn: images, stylesheets, fonts, video.
+- **Not drawn**: iframes from other origins, and native widgets such as date pickers and video controls (`<select>`'s list is). See [Limitations](#limitations).
 
 ## Install
 
@@ -61,7 +61,7 @@ new PanelPointer(camera, renderer.domElement, () => [panel]);
 renderer.setAnimationLoop(() => renderer.render(scene, camera));
 ```
 
-`renderer` can be a `WebGLRenderer` or a `WebGPURenderer` (`three/webgpu`, tried with r186 on both its backends). For VR, add a `PanelXRPointer` (call its `update()` every frame) with a `PanelXRKeyboard`: there is no system keyboard in an immersive session. VR with a `WebGPURenderer` needs a session with the `webgpu` feature, or its WebGL 2 backend (`forceWebGL: true`); it has not been tried.
+`renderer` can be a `WebGLRenderer` or a `WebGPURenderer` (tried with r186). For VR, add a `PanelXRPointer` (call its `update()` every frame) with a `PanelXRKeyboard`: there is no system keyboard in an immersive session. VR with a `WebGPURenderer` has not been tried.
 
 | Option            | Default         | Meaning                                                      |
 | ----------------- | --------------- | ------------------------------------------------------------ |
@@ -78,7 +78,7 @@ renderer.setAnimationLoop(() => renderer.render(scene, camera));
 | `onMessage`       |                 | Data the page sent with `sendToHost()`                       |
 | `onError`         | `console.warn`  | The agent did not connect, or speaks another protocol        |
 
-By default, a link to the panel's own origin opens in the panel, and any other link (another port or subdomain, or the host's own origin) in a new tab. A page opened in the panel that does not connect within `readyTimeout` (a PDF, a page without the agent) is left: the panel goes back and reports it to `onError`.
+By default, a link to the panel's own origin opens in the panel, any other in a new tab. If the page opened does not connect within `readyTimeout` (a PDF, say), the panel goes back and calls `onError`.
 
 ### Adding the agent to a page
 
@@ -99,7 +99,7 @@ import { startAgent } from "@urth/three-html-panel/agent";
 startAgent({ hostOrigin: "https://host.example" });
 ```
 
-A page shown by hosts on several origins (production and staging, say) names them all: separated by spaces in `data-host-origin`, or as a list in `hostOrigin`. If any is not exactly an origin, the agent does not start. For pages you cannot edit, a server or proxy can insert the tag; `injectPanelAgent()` in `vite.panels.config.ts` does this for the demo.
+Several hosts (production and staging, say) are separated by spaces in `data-host-origin`, or a list in `hostOrigin`; if any is not exactly an origin, the agent does not start. `injectPanelAgent()` in `vite.panels.config.ts` inserts the tag into pages served for the demo.
 
 ### Messages between page and host
 
@@ -121,18 +121,16 @@ panel.postMessage("scene-click");
 
 ## Security
 
-Loading the agent is how a page consents to being shown: the agent sends what the page shows, much as if the page posted its own DOM, and only to the origins named in `data-host-origin` (`hostOrigin`). Name fixed origins you trust, never one taken from the URL. The host cannot read a page that does not load the agent, and the agent reads only what the page's own scripts can. A page that is not sandboxed may show the user's own data (with third-party cookies, a logged-in view); the named host receives that too.
+Loading the agent is how a page consents to being shown: the agent sends what the page shows, and only to the origins it names. Name fixed origins you trust, never one taken from the URL. A page that is not sandboxed may show the user's own data (a logged-in view); the named host receives that too.
 
 - **`sandbox: false`** runs the page as an ordinary page of its origin. Use it only for pages you trust: a page on the host's origin can read the host's cookies and storage.
-- **`sandbox: true`** is for pages you do not trust. The iframe gets `sandbox="allow-scripts allow-forms allow-popups"` (never `allow-same-origin`): the page runs on an opaque origin and cannot reach the host's cookies, storage or document. Nor can it take the keyboard: a text field gets the keys only right after the user pressed it.
+- **`sandbox: true`** is for pages you do not trust: `sandbox="allow-scripts allow-forms allow-popups"`, never `allow-same-origin`. The page cannot reach the host's cookies, storage or document, nor take the keyboard.
 
-Either way, treat what comes from the page (`onMessage` data included) as untrusted; the host checks the shape and size of every message (`src/protocol.ts`).
-
-Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups`, and their assets with `Access-Control-Allow-Origin` (they are requested from the origin `null`). Such pages have no cookies or `localStorage`; keep their state on a server. The demo's panel server (`vite.panels.config.ts`) does both.
+Either way, treat `onMessage` data as untrusted. Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups`, and their assets with `Access-Control-Allow-Origin` (they are requested from the origin `null`). They have no cookies or `localStorage`: keep their state on a server.
 
 ## Performance: keep the page small
 
-**This matters more than anything else.** Whenever the page changes (a key, a scroll step, an animation frame, a clock's second), the agent copies the whole page, and the host decodes the copy on its main thread before drawing it. Everything in the copy is paid for on every frame, on every device that shows the panel:
+**This matters more than anything else.** Whenever the page changes (a key, a scroll step, an animation frame), the agent copies the whole page, and the host decodes the copy on its main thread. Everything in it is paid for on every frame, on every device:
 
 - **the DOM**, including what is scrolled away, hidden or closed (`display: none` is copied too)
 - **all of the CSS** (but `@media` rules that do not apply), a UI kit's rules the page never uses included
@@ -148,27 +146,21 @@ The demo's sites, one frame each at 1024×720:
 | [HN Reader](examples/sites/hn-reader/)                    | Vue · Vuetify   | 1187     | 604 kB     |
 | [Gallery](examples/sites/gallery/)                        | Svelte          | 326–456  | 413–859 kB |
 
-On a phone (emulated: a 6× slower CPU), the larger frames take 90–310 ms each to decode, the Timetable's about 20 ms. The Field Guide's frame is mostly its three web fonts (102 kB), HN Reader's Vuetify's CSS (261 kB), Gallery's its images.
+With a 6× slower CPU (a phone, emulated), the larger frames take 90–310 ms each to decode, the Timetable's 20 ms. Most of the Field Guide's is three web fonts; of HN Reader's, Vuetify's CSS; of Gallery's, images.
 
 What helps, most first:
 
-- **Few elements.** Leave out what is not shown (rows scrolled far away, closed menus and dialogs, other tabs), and add it when needed. A pseudo-element with `content: attr(data-…)` shows a line without an element.
-- **Little CSS.** Write your own few rules rather than load a UI kit's. Add a part's rules (a dialog's, say) with the part.
+- **Few elements.** Leave out what is not shown (rows far away, closed menus and dialogs) and add it when needed.
+- **Little CSS.** Your own few rules, not a UI kit's.
 - **System fonts, few and small images.**
-- **No `var()` in shorthands** (`background`, `border`, `border-color`, ...): the copy writes their computed values into every element's style. Use longhands (`background-color`, `outline-color`).
-- **Change only what changed**, and only as often as needed: each change is a whole new frame.
+- **No `var()` in shorthands** (`background`, `border`, ...): the copy writes them out into every element's style. Use longhands (`background-color`).
+- **Change only what changed**: each change is a whole new frame.
 
-A smaller `width` and `height` (with the same `size`) or a lower `pixelRatio` make each frame cheaper to draw, and a panel out of view stops capturing by itself: see [docs/performance.md](docs/performance.md), which also covers `pauseWhenHidden` and `optimizeHover`.
+A smaller `width` and `height` or a lower `pixelRatio` also make frames cheaper: see [docs/performance.md](docs/performance.md).
 
 ## Limitations
 
-- Only what the DOM and CSS describe is drawn. CSS transitions, and animations that end, jump to their end: move things by script instead, a value per frame. `backdrop-filter` is not drawn.
-- A cross-origin video without CORS shows only its poster.
-- The agent keeps hover, press and focus itself, and rewrites the page's `:hover`, `:focus`, ... selectors to match its marks too (`.row:hover` becomes `.row:is(:hover,[data-thp-hover])`); the page's scripts see the rewritten selectors.
-- contenteditable editing relies on `document.execCommand()`. No IME in VR. Touch and VR were tested in emulation, not on devices.
-- A same-site page shares the host's main thread; prefer another site for panel pages.
-
-The details, and the rest (popovers and dialogs, scroll containers, sliders): [docs/limitations.md](docs/limitations.md).
+CSS transitions, and animations that end, jump to their end: move things by script, a value per frame. `backdrop-filter` is not drawn. contenteditable relies on `document.execCommand()`. No IME in VR. The rest: [docs/limitations.md](docs/limitations.md).
 
 ## Development
 
