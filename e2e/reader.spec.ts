@@ -366,12 +366,14 @@ test("plays a video, drawing its frames as they come", async () => {
   test.skip(!panel.drawn, "the frames are only seen in the drawn image (no WebGL)");
   const video = await panel.box("#video");
   const center = { x: video.left + video.width / 2, y: video.top + video.height / 2 };
+  const paused = () =>
+    panel.frame.evaluate(() => document.querySelector<HTMLVideoElement>("#video")!.paused);
+  // Paused until the button is pressed: the button toggles, and would pause a
+  // video that had started (WebKit on Linux starts one fed a stream by itself;
+  // the page pauses it again).
+  await expect.poll(paused).toBe(true);
   await panel.click(await panel.at("#play"));
-  await expect
-    .poll(() =>
-      panel.frame.evaluate(() => !document.querySelector<HTMLVideoElement>("#video")!.paused),
-    )
-    .toBe(true);
+  await expect.poll(paused).toBe(false);
   await panel.page.waitForTimeout(800);
   const first = await panel.pixel(center.x, center.y);
   await panel.page.waitForTimeout(800);
