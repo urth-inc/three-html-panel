@@ -41,9 +41,6 @@ p {
 }
 
 .top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
   padding: 16px 20px 10px;
 }
 
@@ -51,9 +48,12 @@ p {
   font-size: 22px;
 }
 
-.top p {
+/* In place of the articles, when there are none or they could not be read. */
+.message {
+  margin: 0;
+  padding: 16px 4px;
   color: #6b7280;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* ---- Tabs ---- */

@@ -36,7 +36,6 @@ for (let node = blanks.nextNode(); node;) {
 }
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const status = byId("status");
 const list = byId("list");
 const rows = byId("rows");
 
@@ -47,10 +46,6 @@ let made = new Map<number, HTMLAnchorElement>();
 /** The rows in the page: from `shown.first` to `shown.last`. */
 let shown = { first: 0, last: -1 };
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-
-function setText(element: HTMLElement, text: string): void {
-  if (element.textContent !== text) element.textContent = text;
-}
 
 function row(index: number): HTMLAnchorElement {
   let element = made.get(index);
@@ -82,6 +77,14 @@ function place(): void {
   rows.replaceChildren(...elements);
 }
 
+/** Shows a line in place of the articles (there are none, or they could not be read). */
+function say(text: string): void {
+  const line = document.createElement("p");
+  line.className = "message";
+  line.textContent = text;
+  rows.replaceChildren(line);
+}
+
 /** Shows a tab's articles: the rows shown slide in one after the other. */
 function show(data: Articles): void {
   articles = data.articles;
@@ -89,8 +92,8 @@ function show(data: Articles): void {
   shown = { first: 0, last: -1 };
   rows.style.height = `${articles.length * ROW_HEIGHT}px`;
   list.scrollTop = 0;
-  setText(status, articles.length ? `${articles.length} 件` : "記事がありません");
   place();
+  if (articles.length === 0) say("記事がありません");
   Array.from(rows.children as HTMLCollectionOf<HTMLElement>).forEach((element, index) => {
     element.style.opacity = "0";
     setTimeout(
@@ -118,7 +121,6 @@ async function load(next: Topic): Promise<void> {
   Array.from(byId("tabs").children).forEach((tab, index) =>
     tab.toggleAttribute("data-on", TABS[index]!.topic === next),
   );
-  setText(status, "読み込み中…");
   try {
     const response = await fetch(`./api/articles?topic=${encodeURIComponent(next)}`);
     const data = (await response.json()) as Articles & { error?: string };
@@ -126,11 +128,10 @@ async function load(next: Topic): Promise<void> {
     // Another tab was chosen meanwhile.
     if (topic === next) show(data);
   } catch (error) {
-    if (topic === next)
-      setText(
-        status,
-        `読み込めませんでした（${error instanceof Error ? error.message : String(error)}）`,
-      );
+    if (topic === next) {
+      show({ topic: next, articles: [] });
+      say(`読み込めませんでした（${error instanceof Error ? error.message : String(error)}）`);
+    }
   }
   refreshTimer = setTimeout(() => void load(topic), REFRESH);
 }
