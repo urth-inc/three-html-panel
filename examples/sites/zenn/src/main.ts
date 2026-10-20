@@ -143,4 +143,20 @@ for (const { topic: value, name } of TABS) {
   tabs.append(tab);
 }
 list.addEventListener("scroll", place, { passive: true });
+// The panel's agent scrolls the list itself (scrollBy for the wheel, a drag or
+// the scrollbar's track, scrollTo for its thumb) and copies the page right
+// after, before the browser fires `scroll`: in a panel's iframe, whose
+// rendering the browser holds back, that can come long after. Placing the rows
+// in those calls too keeps the copy from showing the list without them. (The
+// agent of 0.3.0 does so; one that fires `scroll` as it scrolls needs none of this.)
+for (const name of ["scrollBy", "scrollTo"] as const) {
+  const scroll = list[name] as (this: Element, ...args: unknown[]) => void;
+  Object.defineProperty(list, name, {
+    configurable: true,
+    value(this: Element, ...args: unknown[]) {
+      scroll.apply(this, args);
+      place();
+    },
+  });
+}
 void load("");
